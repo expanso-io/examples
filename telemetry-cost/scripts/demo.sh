@@ -102,7 +102,7 @@ $(printf '%s\xe2\x9c\x97%s' "$RED" "$RST") No Expanso Cloud demo profile found, 
 This demo deploys through Expanso Cloud onto a dedicated edge node. Set it up
 once:
 
-    make cloud-setup
+    just cloud-setup
 
 That walks you through creating a network at https://cloud.expanso.io,
 registering a demo node (label demo=telemetry-cost), and saving a profile. It
@@ -253,7 +253,7 @@ ensure_sims() {
     start_sim cloud logsim-cloud ""                       "$(scale_rate 2 "$RATE")"
     beat "log streams started (rate base $RATE) -> tcp://localhost:$SINK_PORT"
   else
-    make -s sims
+    just -q sims
   fi
 }
 
@@ -290,7 +290,7 @@ run_audit() {
   dwell
   pause "let a sample collect, then run the audit table"
   say ""; say "audit table:"
-  make -s audit 2>/dev/null || beat "(no sample yet; let it stream longer, then: make audit)"
+  just -q audit 2>/dev/null || beat "(no sample yet; let it stream longer, then: just audit)"
   say ""; say "stats:"; show_stats
 }
 
@@ -349,8 +349,8 @@ run_tiers() {
   local from to
   from="$(iso_offset -1)"; to="$(iso_offset +1)"
   beat "auditor calls: pull the last hour back out of cold storage"
-  beat "  make rehydrate FROM=$from TO=$to"
-  make -s rehydrate FROM="$from" TO="$to" 2>/dev/null \
+  beat "  just rehydrate $from $to"
+  just -q rehydrate "$from" "$to" 2>/dev/null \
     || beat "(nothing in cold yet; let tiers stream longer, then re-run the rehydrate line)"
 }
 
@@ -368,16 +368,16 @@ teardown() {
   hdr "Wrapping up"
   if [ "$KEEP" -eq 1 ]; then
     beat "--keep: leaving the dashboard, log streams, and jobs running for continued play"
-    beat "stop everything later with: make clean"
+    beat "stop everything later with: just clean"
     return 0
   fi
-  make -s sims-stop >/dev/null 2>&1 || true
+  just -q sims-stop >/dev/null 2>&1 || true
   beat "stopped log streams"
   for n in 00-intake 01-tax 02-audit 03-filter 04-tiers; do stop_job "$n"; done
   beat "stopped demo jobs"
   if [ "$LOCAL" -eq 1 ]; then
     beat "left the local edge + dashboard up (cheap, reused next run)"
-    beat "fully tear down with: make clean"
+    beat "fully tear down with: just clean"
   else
     stop_board
     beat "stopped the local dashboard"
@@ -394,7 +394,7 @@ if [ "$LOCAL" -eq 1 ]; then
     || die "tool checks failed (see above). Install the missing tools, then re-run."
 else
   "$ROOT/scripts/preflight.sh" --profile "$PROFILE" \
-    || die "cloud preflight failed for profile '$PROFILE'. Re-run: make cloud-setup"
+    || die "cloud preflight failed for profile '$PROFILE'. Re-run: just cloud-setup"
 fi
 
 # --- stage: jobs + dashboard -------------------------------------------------
@@ -402,13 +402,13 @@ fi
 if [ "$LOCAL" -eq 1 ]; then
   hdr "Staging (local / offline path)"
   beat "starting a local edge ($LOCAL_ENDPOINT) and the costboard dashboard"
-  make -s edge board
+  just -q edge board
 else
   hdr "Staging (cloud path)"
   beat "regenerating selector-scoped cloud jobs (jobs/cloud/)"
-  make -s cloud-jobs || die "could not generate jobs/cloud/ - ensure the Makefile has a cloud-jobs target"
+  just -q cloud-jobs || die "could not generate jobs/cloud/ - ensure the justfile has a cloud-jobs recipe"
   beat "starting the local costboard dashboard (the data-plane view)"
-  make -s board
+  just -q board
 fi
 
 # --- mental-model banner -----------------------------------------------------

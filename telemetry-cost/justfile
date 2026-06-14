@@ -1,0 +1,365 @@
+# telemetry-cost — Expanso Cloud is the orchestrator.
+#
+# You deploy a job once; the cloud schedules it onto matching edge nodes and
+# runs its lifecycle. The event source is the public log-simulators suite (no
+# install, just uvx).
+#
+# QUICKSTART (cloud-first — the headline path):
+#   just cloud-setup   # one-time: register a demo edge node + save a profile
+#   just demo          # run the guided demo THROUGH Expanso Cloud
+#                      #   just demo --scenario filter   # one pillar
+#                      #   just demo --no-pause          # B-roll (no Enter prompts)
+#   just doctor        # tools + cloud connectivity check (green/red)
+#   just cloud-clean   # stop the demo node, keep the saved profile
+#
+# OFFLINE / LOCAL path (the escape hatch — no cloud account needed):
+#   just demo-local --scenario tax   # the same demo against a local edge node
+#   just edge          # start a local Expanso Edge node (API on 19010)
+#   just board         # start the costboard dashboard (http://localhost:8090)
+#   just demo1         # deploy the tax scenario + intake pipeline (local)
+#   just sims          # start the log-simulator streams feeding the edge
+#   just eval          # reproduce every number in RESULTS.md
+#   just clean         # kill everything, remove all generated state
+#
+# SAFETY: the cloud recipes operate ONLY on a profile you create for this demo
+# (recorded in .demo-cloud.env). They never touch any other Expanso profile.
+
+edge_endpoint := env_var_or_default("EDGE_ENDPOINT", "http://127.0.0.1:19010")
+board_url     := env_var_or_default("BOARD_URL", "http://127.0.0.1:8090")
+sink_port     := env_var_or_default("SINK_PORT", "5601")
+run_dir       := ".run"
+
+# log-simulators source. Defaults to the public repo (uvx pulls it on demand);
+# set LOGSIM_SRC to a local checkout to run fully offline.
+logsim_src    := env_var_or_default("LOGSIM_SRC", "git+https://github.com/expanso-io/log-simulators")
+
+# Deploy flags. Default targets the local edge over its API. For Expanso Cloud,
+# the guided `just demo` path resolves a profile itself; the local recipes below
+# can be pointed at a profile with: just demo1 deploy_flags="--profile demo".
+deploy_flags  := env_var_or_default("DEPLOY_FLAGS", "--endpoint " + edge_endpoint)
+
+# Grouped help (default recipe). `just --list` also works.
+help:
+    #!/usr/bin/env bash
+    cat <<'EOF'
+    telemetry-cost — Expanso Cloud is the orchestrator.
+
+    QUICKSTART (cloud-first):
+      just cloud-setup   one-time: register a demo edge node + save a profile
+      just demo          run the guided demo THROUGH Expanso Cloud
+                           just demo --scenario tax|audit|filter|tiers|all
+                           just demo --no-pause   # B-roll, no Enter prompts
+                           just demo --keep       # leave board+sims+node up
+      just doctor        tools + cloud connectivity check (green/red)
+      just cloud-jobs    (re)generate jobs/cloud/*.yaml (selector-injected)
+      just cloud-clean   stop the demo node + remove .edge-cloud (keep profile)
+
+    OFFLINE / LOCAL path (no cloud account needed):
+      just demo-local --scenario tax   the same guided demo against a local node
+      just edge          start a local Expanso Edge node (API on 19010)
+      just board         start the costboard dashboard (http://127.0.0.1:8090)
+      just intake        deploy the socket_server intake/tee pipeline
+      just sims          start the log-simulator streams
+      just sims-stop     stop the log-simulator streams
+      just fixtures      regenerate committed fixtures (seeded)
+      just demo1..demo4  the four pillar demos, local (tax / audit / filter / tiers)
+      just demo3-step1..demo3-step4  filter pillar, one rule at a time (local)
+      just audit         print the volume-vs-queried table from the audit sample
+      just rehydrate FROM TO [GREP]   pull events back from cold
+      just test          run the pytest suite
+      just eval          reproduce all published numbers (writes evals/REPORT.md)
+      just reset         zero the costboard counters
+      just compose-jobs  generate jobs/compose/ variants (service hostnames)
+      just clean         kill edge+board+sims+cloud node, remove generated state
+    EOF
+
+# --- cloud-first runner entrypoints -----------------------------------------
+# Thin wrappers over the cloud-first scripts. Profile resolution and the
+# never-touch-a-customer-profile guard live in scripts/demo.sh (it refuses to
+# guess a profile). Pass any flags straight through, e.g.
+#   just demo --scenario filter --no-pause
+
+# Run the guided demo THROUGH Expanso Cloud (deploys via a saved profile).
+demo *args:
+    ./scripts/demo.sh {{args}}
+
+# One-time interactive Cloud onboarding (creates .demo-cloud.env).
+cloud-setup:
+    ./scripts/cloud_setup.sh
+
+# Preflight: tools + cloud connectivity, green/red with fixes.
+doctor:
+    ./scripts/preflight.sh
+
+# The same guided demo with --local (no profile, local edge node).
+demo-local *args:
+    ./scripts/demo.sh --local {{args}}
+
+# Copy each base job to jobs/cloud/ and inject a top-level `selector`
+# (demo=telemetry-cost) so Expanso Cloud schedules onto the demo node only. Base
+# jobs stay selector-free so they remain portable for --local.
+
+# (Re)generate jobs/cloud/*.yaml with the demo-node selector injected.
+cloud-jobs:
+    python3 scripts/gen_cloud_jobs.py
+
+# Drops the demo node's data dir but KEEPs the profile + .demo-cloud.env.
+# Pidfile-primary; the pkill fallback is pinned to THIS directory's .edge-cloud
+# so it can never match a neighbor or customer node from a different data dir.
+
+# Stop the demo node + remove .edge-cloud (keep the saved profile).
+cloud-clean:
+    #!/usr/bin/env bash
+    if [ -f {{run_dir}}/cloud-edge.pid ]; then
+        kill "$(cat {{run_dir}}/cloud-edge.pid)" 2>/dev/null || true
+        rm -f {{run_dir}}/cloud-edge.pid
+        echo "cloud demo node stopped"
+    fi
+    pkill -f "expanso-edge run --data-dir $PWD/.edge-cloud" 2>/dev/null || true
+    sleep 0.3
+    rm -rf .edge-cloud
+    echo "cloud-clean: demo node stopped, .edge-cloud removed (profile + .demo-cloud.env kept)"
+
+# --- long-running processes (nohup + pidfile; idempotent) -------------------
+
+# Start a local Expanso Edge node (API on 19010).
+edge:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p {{run_dir}}
+    if [ -f {{run_dir}}/edge.pid ] && kill -0 "$(cat {{run_dir}}/edge.pid)" 2>/dev/null; then
+        echo "edge already running (pid $(cat {{run_dir}}/edge.pid))"
+    else
+        nohup expanso-edge run --local --api-listen 127.0.0.1:19010 \
+            --data-dir ./.edge-data --no-watch > {{run_dir}}/edge.log 2>&1 &
+        echo $! > {{run_dir}}/edge.pid
+        echo "edge starting (pid $(cat {{run_dir}}/edge.pid))"
+    fi
+    ok=0
+    for _ in $(seq 1 100); do
+        if curl -fsS {{edge_endpoint}}/api/v1/health >/dev/null 2>&1; then ok=1; break; fi
+        sleep 0.2
+    done
+    [ "$ok" -eq 1 ] || { echo "edge failed to start; see {{run_dir}}/edge.log"; exit 1; }
+    echo "edge healthy at {{edge_endpoint}}"
+
+# Start the costboard dashboard (http://127.0.0.1:8090).
+board:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p {{run_dir}}
+    if [ -f {{run_dir}}/board.pid ] && kill -0 "$(cat {{run_dir}}/board.pid)" 2>/dev/null; then
+        echo "costboard already running (pid $(cat {{run_dir}}/board.pid))"
+    else
+        nohup python3 costboard/server.py > {{run_dir}}/board.log 2>&1 &
+        echo $! > {{run_dir}}/board.pid
+        echo "costboard starting (pid $(cat {{run_dir}}/board.pid))"
+    fi
+    ok=0
+    for _ in $(seq 1 100); do
+        if curl -fsS {{board_url}}/stats >/dev/null 2>&1; then ok=1; break; fi
+        sleep 0.2
+    done
+    [ "$ok" -eq 1 ] || { echo "costboard failed to start; see {{run_dir}}/board.log"; exit 1; }
+    echo "costboard live at {{board_url}}"
+
+# Deploy the socket_server intake/tee pipeline (the raw lane + scenario feed).
+intake: edge board
+    expanso-cli job deploy jobs/00-intake.yaml {{deploy_flags}} --force
+    @echo "intake listening on :{{sink_port}} — now run: just sims"
+
+# --- the log-simulator streams ----------------------------------------------
+# Four real-world formats stream over TCP into the intake socket_server:
+#   logsim-app    structured JSON app logs
+#   logsim-k8s    Kubernetes CRI lines (crash-loop scenario)
+#   logsim-web    NCSA combined access logs
+#   logsim-cloud  AWS CloudTrail JSON
+# Modest rates so a demo audience can read the meter climb. Each runs under
+# nohup with a pidfile in {{run_dir}}; sims-stop (and clean) tear them down.
+
+# Start the log-simulator streams feeding the intake socket_server.
+sims:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p {{run_dir}}
+    start_sim() {
+        local name="$1" tool="$2"; shift 2
+        if [ -f {{run_dir}}/sim-"$name".pid ] && kill -0 "$(cat {{run_dir}}/sim-"$name".pid)" 2>/dev/null; then
+            echo "sim $name already running (pid $(cat {{run_dir}}/sim-"$name".pid))"
+        else
+            nohup uvx --from {{logsim_src}} "$tool" "$@" \
+                --output tcp://localhost:{{sink_port}} > {{run_dir}}/sim-"$name".log 2>&1 &
+            echo $! > {{run_dir}}/sim-"$name".pid
+            echo "sim $name started (pid $(cat {{run_dir}}/sim-"$name".pid))"
+        fi
+    }
+    start_sim app   logsim-app   --rate 8
+    start_sim k8s   logsim-k8s   --scenario crash-loop --rate 6
+    start_sim web   logsim-web   --rate 10
+    start_sim cloud logsim-cloud --rate 2
+    echo "sims streaming to tcp://localhost:{{sink_port}} — watch {{board_url}}"
+
+# Stop the log-simulator streams.
+sims-stop:
+    #!/usr/bin/env bash
+    for s in app k8s web cloud; do
+        if [ -f {{run_dir}}/sim-"$s".pid ]; then
+            kill "$(cat {{run_dir}}/sim-"$s".pid)" 2>/dev/null || true
+            rm -f {{run_dir}}/sim-"$s".pid
+            echo "sim $s stopped"
+        fi
+    done
+    pkill -f "logsim-[a-z]* .*--output tcp://" 2>/dev/null || true
+
+# Regenerate the committed, seeded fixtures (deterministic: same seed every run).
+fixtures:
+    scripts/make_fixtures.sh
+
+# --- the four pillar demos (local) -------------------------------------------
+# Each demo deploys the scenario pipeline FIRST (so its http_server input on
+# 8081 is listening), then the intake/tee pipeline. Then start the streams with
+# `just sims`. Open {{board_url}}. stop-scenarios frees port 8081 between demos.
+
+# Free port 8081: stop whichever scenario currently holds it.
+stop-scenarios:
+    #!/usr/bin/env bash
+    for j in 01-tax 02-audit 03-filter 04-tiers; do
+        expanso-cli job stop "$j" {{deploy_flags}} --force >/dev/null 2>&1 || true
+    done
+
+# Pillar 1 (local): ship everything, the telemetry tax.
+demo1: edge board stop-scenarios
+    expanso-cli job deploy jobs/01-tax.yaml {{deploy_flags}} --force
+    expanso-cli job deploy jobs/00-intake.yaml {{deploy_flags}} --force
+    @echo "demo1 (tax) deployed — start the streams: just sims  (dashboard: {{board_url}})"
+    @echo "  cloud experience (guided, through Expanso Cloud): just demo --scenario tax"
+
+# Pillar 2 (local): tap a sample lane, then `just audit`.
+demo2: edge board stop-scenarios
+    expanso-cli job deploy jobs/02-audit.yaml {{deploy_flags}} --force
+    expanso-cli job deploy jobs/00-intake.yaml {{deploy_flags}} --force
+    @echo "demo2 (audit) deployed — start the streams: just sims, let it collect, then: just audit"
+    @echo "  cloud experience (guided, through Expanso Cloud): just demo --scenario audit"
+
+# Pillar 3 (local): full edge filter (step 4, THE demo).
+demo3: edge board stop-scenarios
+    expanso-cli job deploy jobs/03-filter-step4.yaml {{deploy_flags}} --force
+    expanso-cli job deploy jobs/00-intake.yaml {{deploy_flags}} --force
+    @echo "demo3 (filter, step 4) deployed — start the streams: just sims  (dashboard: {{board_url}})"
+    @echo "  cloud experience (guided, through Expanso Cloud): just demo --scenario filter"
+
+# Pillar 4 (local): hot/cold tiering + rehydration.
+demo4: edge board stop-scenarios
+    expanso-cli job deploy jobs/04-tiers.yaml {{deploy_flags}} --force
+    expanso-cli job deploy jobs/00-intake.yaml {{deploy_flags}} --force
+    @echo "demo4 (tiers) deployed — start the streams: just sims  (later: just rehydrate FROM TO)"
+    @echo "  cloud experience (guided, through Expanso Cloud): just demo --scenario tiers"
+
+# --- demo3 step-by-step ------------------------------------------------------
+# CONTRACT: jobs/03-filter-step*.yaml MUST all carry the SAME `name:` field.
+# Expanso identifies jobs by name, so deploying step2 over step1 REPLACES the
+# running filter in place — the live "tighten the rules" story.
+
+# Warn if the filter steps do not share one job name (breaks in-place replace).
+check-filter-names:
+    #!/usr/bin/env bash
+    if ls jobs/03-filter-step*.yaml >/dev/null 2>&1; then
+        n=$(grep -h '^name:' jobs/03-filter-step*.yaml | sort -u | wc -l | tr -d ' ')
+        if [ "$n" != "1" ]; then
+            echo "WARNING: jobs/03-filter-step*.yaml carry different 'name:' fields;"
+            echo "         step deploys will NOT replace each other:"
+            grep -H '^name:' jobs/03-filter-step*.yaml
+        fi
+    fi
+
+# Filter step 1 (local): drop health checks.
+demo3-step1: edge board check-filter-names
+    expanso-cli job deploy jobs/03-filter-step1.yaml {{deploy_flags}} --force
+    expanso-cli job deploy jobs/00-intake.yaml {{deploy_flags}} --force
+    @echo "step 1 deployed — just sims (if not already streaming)"
+    @echo "  cloud experience (guided walk of all 4 steps): just demo --scenario filter"
+
+# Filter step 2 (local): + drop DEBUG.
+demo3-step2: edge board check-filter-names
+    expanso-cli job deploy jobs/03-filter-step2.yaml {{deploy_flags}} --force
+    expanso-cli job deploy jobs/00-intake.yaml {{deploy_flags}} --force
+    @echo "step 2 deployed — just sims (if not already streaming)"
+    @echo "  cloud experience (guided walk of all 4 steps): just demo --scenario filter"
+
+# Filter step 3 (local): + crash-loop dedupe.
+demo3-step3: edge board check-filter-names
+    expanso-cli job deploy jobs/03-filter-step3.yaml {{deploy_flags}} --force
+    expanso-cli job deploy jobs/00-intake.yaml {{deploy_flags}} --force
+    @echo "step 3 deployed — just sims (if not already streaming)"
+    @echo "  cloud experience (guided walk of all 4 steps): just demo --scenario filter"
+
+# Filter step 4 (local): + keep error/warn/slow, sample the rest.
+demo3-step4: edge board check-filter-names
+    expanso-cli job deploy jobs/03-filter-step4.yaml {{deploy_flags}} --force
+    expanso-cli job deploy jobs/00-intake.yaml {{deploy_flags}} --force
+    @echo "step 4 deployed — just sims (if not already streaming)"
+    @echo "  cloud experience (guided walk of all 4 steps): just demo --scenario filter"
+
+# --- analysis ----------------------------------------------------------------
+
+# Print the volume-vs-queried table from the captured audit sample.
+audit:
+    python3 scripts/audit.py data/audit-sample.jsonl
+
+# Pull events back from cold storage for a window. e.g.
+#   just rehydrate 2026-06-10T19:00:00Z 2026-06-10T19:30:00Z
+#   just rehydrate 2026-06-10T19:00:00Z 2026-06-10T19:30:00Z 'POST /login'
+rehydrate from to grep="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{grep}}" ]; then
+        python3 scripts/rehydrate.py --from "{{from}}" --to "{{to}}" --stats --grep "{{grep}}"
+    else
+        python3 scripts/rehydrate.py --from "{{from}}" --to "{{to}}" --stats
+    fi
+
+# --- quality gates -----------------------------------------------------------
+
+# Run the pytest suite.
+test:
+    python3 -m pytest tests/ -q
+
+# Reproduce all published numbers (writes evals/REPORT.md).
+eval:
+    python3 evals/run_evals.py
+
+# Zero the costboard counters.
+reset:
+    curl -fsS -X POST {{board_url}}/reset && echo
+
+# Generate jobs/compose/*.yaml: same pipelines, costboard at its compose hostname.
+compose-jobs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p jobs/compose
+    for f in jobs/0*.yaml; do
+        [ -f "$f" ] || continue
+        sed -e 's#http://localhost:8090#http://costboard:8090#g' \
+            -e 's#http://127.0.0.1:8090#http://costboard:8090#g' \
+            "$f" > jobs/compose/"$(basename "$f")"
+        echo "wrote jobs/compose/$(basename "$f")"
+    done
+
+# --- teardown ----------------------------------------------------------------
+# Kills via pidfiles first, then a pkill fallback pinned to OUR exact process
+# signatures so unrelated processes are never touched.
+
+# Kill edge+board+sims+cloud node, remove all generated state (keep profile).
+clean: sims-stop
+    #!/usr/bin/env bash
+    [ -f {{run_dir}}/edge.pid ] && kill "$(cat {{run_dir}}/edge.pid)" 2>/dev/null || true
+    [ -f {{run_dir}}/board.pid ] && kill "$(cat {{run_dir}}/board.pid)" 2>/dev/null || true
+    [ -f {{run_dir}}/cloud-edge.pid ] && kill "$(cat {{run_dir}}/cloud-edge.pid)" 2>/dev/null || true
+    pkill -f "api-listen 127.0.0.1:19010" 2>/dev/null || true
+    pkill -f "costboard/server.py" 2>/dev/null || true
+    pkill -f "logsim-[a-z]* .*--output tcp://" 2>/dev/null || true
+    pkill -f "expanso-edge run --data-dir $PWD/.edge-cloud" 2>/dev/null || true
+    sleep 0.3
+    rm -rf {{run_dir}} .edge-data* .edge-cloud data cold-storage
+    find . -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+    echo "clean: processes stopped, generated state removed (.demo-cloud.env kept)"

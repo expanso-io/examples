@@ -447,7 +447,7 @@ def main() -> int:
         return 2
     for port, what in ((8090, "costboard"), (19014, "eval edge")):
         if not port_free(port):
-            print(f"error: port {port} busy ({what}) — run 'make clean' first", file=sys.stderr)
+            print(f"error: port {port} busy ({what}) — run 'just clean' first", file=sys.stderr)
             return 2
 
     # Regenerate the deterministic file-input variants from the current jobs.

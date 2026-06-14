@@ -11,9 +11,12 @@ Three steps: install, connect to the cloud, run the demo.
 
 ## Step 0: Install
 
-One-liners, no build step. Linux or macOS, Python 3.10+, and `make`.
+One-liners, no build step. Linux or macOS, Python 3.10+, and `just`.
 
 ```bash
+# just (the single-binary command runner; every command below goes through it)
+brew install just   # or: cargo install just  (see https://just.systems)
+
 # uv (provides uvx, which runs the log simulators with no install)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
@@ -34,7 +37,7 @@ cd examples/telemetry-cost
 ## Step 1: Connect to Expanso Cloud
 
 ```bash
-make cloud-setup
+just cloud-setup
 ```
 
 This is a one-time, interactive onboarding. It walks you through
@@ -51,7 +54,7 @@ This is a one-time, interactive onboarding. It walks you through
 **What you are doing and why.** Expanso splits into a control plane and a data
 plane. The control plane is Expanso Cloud: it holds your jobs and decides which
 nodes run them. The data plane is the edge node: it runs the pipeline next to
-where the data is. `make cloud-setup` registers your laptop as one node in that
+where the data is. `just cloud-setup` registers your laptop as one node in that
 data plane and points the CLI at the control plane. After this, you deploy to
 the cloud and the cloud places the work on your node. You never SSH the node.
 
@@ -61,7 +64,7 @@ When it finishes, the demo profile is recorded in `.demo-cloud.env`
 ## Step 2: Run the demo
 
 ```bash
-make demo
+just demo
 ```
 
 What you see:
@@ -81,10 +84,10 @@ What you see:
 Run one scenario at a time with `SCENARIO`:
 
 ```bash
-make demo SCENARIO=tax      # or audit, filter, tiers
+just demo --scenario tax      # or audit, filter, tiers
 ```
 
-`make clean` stops everything the demo started and removes generated state. It
+`just clean` stops everything the demo started and removes generated state. It
 leaves your demo node and profile in place (they are cheap and reused next run).
 
 ## Recording B-roll
@@ -92,7 +95,7 @@ leaves your demo node and profile in place (they are cheap and reused next run).
 For a clean screen recording with no pauses for Enter:
 
 ```bash
-make demo SCENARIO=filter NOPAUSE=1
+just demo --scenario filter --no-pause
 ```
 
 This drives the filter arc end to end on its own timing, so you can capture the
@@ -113,7 +116,7 @@ Skip the cloud entirely. A local Expanso Edge node in `--local` mode plays the
 fleet. This is also what CI and the eval harness use.
 
 ```bash
-make demo-local
+just demo-local
 ```
 
 Same scenarios, same dashboard, same numbers. No account, no network. When you

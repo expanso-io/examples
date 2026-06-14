@@ -3,7 +3,7 @@
 # Expanso Edge local state
 .edge-data*
 
-# Process / pidfile dir (make sims, make edge)
+# Process / pidfile dir (just sims, just edge)
 .run/
 
 # Generated demo state

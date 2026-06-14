@@ -6,7 +6,7 @@
 #
 # The headline experience runs THROUGH Expanso Cloud (cloud.expanso.io), which
 # orchestrates the same job YAMLs onto a registered edge node:
-#   make cloud-setup && make demo
+#   just cloud-setup && just demo
 #
 #   docker compose --profile demo1 up    # Pillar 1: the telemetry tax
 #   docker compose --profile demo2 up    # Pillar 2: audit what you query
@@ -102,7 +102,7 @@ services:
   # Each installs expanso-cli via the official installer (get.expanso.io) and
   # deploys against the edge service API, preferring the jobs/compose/
   # variants (costboard addressed by service hostname; regenerate with
-  # `make compose-jobs`). Scenario pipeline first, intake second, so lines
+  # `just compose-jobs`). Scenario pipeline first, intake second, so lines
   # always have a listener. See scripts/compose_deploy.sh for the mechanism.
 
   deploy-demo1:

@@ -13,7 +13,7 @@
 #
 # Inside compose, costboard is reachable at http://costboard:8090 instead of
 # localhost, so this script prefers a pre-generated jobs/compose/<name>
-# variant (see `make compose-jobs`) and otherwise derives one on the fly with
+# variant (see `just compose-jobs`) and otherwise derives one on the fly with
 # sed. The generator -> http_server hop stays on localhost: both jobs run
 # inside the same edge container.
 set -eu

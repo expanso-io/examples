@@ -14,7 +14,7 @@ cloud and the cloud places the work.
 cloud decides placement and manages lifecycle. The data plane is local because
 the node is your laptop, so the simulators, the costboard, the audit sample, and
 the cold storage all live on this machine. On a real fleet only the node moves;
-the control-plane motion is identical. The `--local` path (`make demo-local`)
+the control-plane motion is identical. The `--local` path (`just demo-local`)
 swaps the cloud for a local edge node and is the offline proxy for everything
 below.
 
@@ -27,7 +27,7 @@ Run this once before you walk on stage. It checks tools plus cloud
 connectivity and prints a green/red line with the exact fix for anything red.
 
 ```bash
-make doctor
+just doctor
 ```
 
 Green means: `uv`, `expanso-edge`, `expanso-cli`, `python3`, and `curl` are on
@@ -35,7 +35,7 @@ PATH, a demo profile exists, and your demo node shows **connected** on it. Red
 with no profile means you have not run setup yet:
 
 ```bash
-make cloud-setup      # one-time; see QUICKSTART.md
+just cloud-setup      # one-time; see QUICKSTART.md
 ```
 
 Then load the profile name into your shell so the manual commands below work:
@@ -46,26 +46,26 @@ echo "$DEMO_PROFILE"       # confirm it is your demo profile, not a customer one
 ```
 
 If the node row reads **connecting**, give it a few seconds and rerun
-`make doctor`; it flips to connected once the agent's outbound link is up.
+`just doctor`; it flips to connected once the agent's outbound link is up.
 
 ## Driving the demo
 
 The simplest drive is one command:
 
 ```bash
-make demo                       # all four scenarios, pauses for Enter between beats
-make demo SCENARIO=filter       # a single pillar (tax | audit | filter | tiers)
-make demo SCENARIO=filter NOPAUSE=1   # no pauses, for B-roll capture
+just demo                       # all four scenarios, pauses for Enter between beats
+just demo --scenario filter       # a single pillar (tax | audit | filter | tiers)
+just demo --scenario filter --no-pause   # no pauses, for B-roll capture
 ```
 
-`make demo` starts the local costboard, regenerates the selector-injected cloud
-jobs (`make cloud-jobs`), deploys through your profile, prints the `execution
+`just demo` starts the local costboard, regenerates the selector-injected cloud
+jobs (`just cloud-jobs`), deploys through your profile, prints the `execution
 list` rows so the audience sees the cloud schedule each job onto the node, and
 keeps the simulators streaming across scenario changes.
 
 Each section below also gives the **manual command equivalents** so you can
 drive a pillar by hand. They assume `DEMO_PROFILE` is set (the `source` line
-above) and that the local costboard is up (`make board`).
+above) and that the local costboard is up (`just board`).
 
 ---
 
@@ -78,17 +78,17 @@ teams it is also the current architecture.
 ### Command
 
 ```bash
-make demo SCENARIO=tax
+just demo --scenario tax
 ```
 
 Manual equivalent:
 
 ```bash
-make board
-make cloud-jobs
+just board
+just cloud-jobs
 expanso-cli job deploy jobs/cloud/01-tax.yaml   --profile "$DEMO_PROFILE" --force
 expanso-cli job deploy jobs/cloud/00-intake.yaml --profile "$DEMO_PROFILE" --force
-make sims
+just sims
 ```
 
 ### Cloud beat
@@ -124,7 +124,7 @@ it run in silence for five seconds.
 ### Reset
 
 ```bash
-make reset        # zero the costboard counters, keep everything running
+just reset        # zero the costboard counters, keep everything running
 ```
 
 ---
@@ -137,17 +137,17 @@ make reset        # zero the costboard counters, keep everything running
 ### Command
 
 ```bash
-make demo SCENARIO=audit
+just demo --scenario audit
 ```
 
 Manual equivalent (then wait ~60s for a sample, then run the audit):
 
 ```bash
-make reset
+just reset
 expanso-cli job deploy jobs/cloud/02-audit.yaml  --profile "$DEMO_PROFILE" --force
 expanso-cli job deploy jobs/cloud/00-intake.yaml --profile "$DEMO_PROFILE" --force
-make sims
-make audit
+just sims
+just audit
 ```
 
 ### Cloud beat
@@ -157,7 +157,7 @@ expanso-cli job describe 02-audit --profile "$DEMO_PROFILE"
 ```
 
 The audit job tees a classified sample to `data/audit-sample.jsonl` on the node.
-That file is local because the node is local; `make audit` reads it here.
+That file is local because the node is local; `just audit` reads it here.
 
 ### Talk track
 
@@ -166,7 +166,7 @@ That file is local because the node is local; `make audit` reads it here.
 2. **"The pipeline parsed all four formats at the edge."** NCSA regex, CRI
    prefix plus embedded zap and klog payloads, CloudTrail by shape. The tee
    captures each line's classification: source, severity, query-likelihood.
-3. **Run `make audit`.** Walk the table: volume share per pattern versus
+3. **Run `just audit`.** Walk the table: volume share per pattern versus
    queried share, and the four action buckets (stop shipping, route cold,
    sample, keep hot). Be honest about the method: the query-likelihood rules
    are heuristics standing in for your SIEM's query logs. In production you run
@@ -180,7 +180,7 @@ percentage of the meter from demo 1 bought nothing.
 ### Reset
 
 ```bash
-make reset
+just reset
 ```
 
 ---
@@ -194,7 +194,7 @@ each filter is worth.
 ### Command
 
 ```bash
-make demo SCENARIO=filter
+just demo --scenario filter
 ```
 
 This walks step 1 to step 4 as in-place redeploys. Every step keeps the same job
@@ -203,14 +203,14 @@ name (`03-filter`), so each deploy replaces the running filter live.
 Manual equivalent (deploy the steps in order; watch the line bend between each):
 
 ```bash
-make reset
-make cloud-jobs
+just reset
+just cloud-jobs
 expanso-cli job deploy jobs/cloud/00-intake.yaml      --profile "$DEMO_PROFILE" --force
 expanso-cli job deploy jobs/cloud/03-filter-step1.yaml --profile "$DEMO_PROFILE" --force   # drop health checks
 expanso-cli job deploy jobs/cloud/03-filter-step2.yaml --profile "$DEMO_PROFILE" --force   # + drop debug
 expanso-cli job deploy jobs/cloud/03-filter-step3.yaml --profile "$DEMO_PROFILE" --force   # + dedupe crash loop
 expanso-cli job deploy jobs/cloud/03-filter-step4.yaml --profile "$DEMO_PROFILE" --force   # + keep error/warn/slow, sample the rest
-make sims
+just sims
 ```
 
 ### Cloud beat
@@ -249,7 +249,7 @@ the bend is the demo, do not rush it.
 ### Reset
 
 ```bash
-make reset
+just reset
 ```
 
 ---
@@ -263,16 +263,16 @@ window back out the day the auditor calls.
 ### Command
 
 ```bash
-make demo SCENARIO=tiers
+just demo --scenario tiers
 ```
 
 Manual equivalent:
 
 ```bash
-make reset
+just reset
 expanso-cli job deploy jobs/cloud/04-tiers.yaml  --profile "$DEMO_PROFILE" --force
 expanso-cli job deploy jobs/cloud/00-intake.yaml --profile "$DEMO_PROFILE" --force
-make sims
+just sims
 ```
 
 ### Cloud beat
@@ -295,12 +295,12 @@ expanso-cli job describe 04-tiers --profile "$DEMO_PROFILE"
 4. **"The auditor calls."** Rehydrate a window (use the current hour, UTC):
 
    ```bash
-   make rehydrate FROM=2026-06-10T19:00:00Z TO=2026-06-10T20:00:00Z GREP='POST /login'
+   just rehydrate 2026-06-10T19:00:00Z 2026-06-10T20:00:00Z 'POST /login'
    ```
 
    Matching raw lines stream back out, original bytes. Honest caveat out loud:
-   cold stores raw lines, so the window selects hour partitions and `GREP`
-   narrows within them. The cold partitions are on the node's local disk, so
+   cold stores raw lines, so the window selects hour partitions and a trailing
+   pattern argument narrows within them. The cold partitions are on the node's local disk, so
    rehydrate reads them here.
 
 ### Money shot
@@ -311,7 +311,7 @@ scrolling. Cheap AND retrievable is the whole argument.
 ### Reset
 
 ```bash
-make reset
+just reset
 ```
 
 ---
@@ -319,23 +319,23 @@ make reset
 ## The 15 to 20 minute full arc
 
 One continuous story for a meetup slot or a customer call. Costboard stays on
-screen the entire time. Pre-flight (`make doctor`, `source .demo-cloud.env`) is
+screen the entire time. Pre-flight (`just doctor`, `source .demo-cloud.env`) is
 done before you start talking.
 
 | Clock | Beat | Commands |
 |---|---|---|
 | 0:00-1:00 | Frame the two planes: "I deploy once to Expanso Cloud; it schedules onto the node. The node is my laptop, so the streams and the meter are local, but the orchestration is remote. Do not trust me; this runs on your log formats." | |
-| 1:00-4:00 | **Demo 1, the tax.** Show `job describe 01-tax` reporting the job placed on the node. Real formats in, meter at full rate, reduction 0%. "This is the default." | `make demo SCENARIO=tax` |
-| 4:00-8:00 | **Demo 2, the audit.** Parse at the edge, join volume against query patterns. | `make demo SCENARIO=audit` (wait 60s, reads the local sample) |
-| 8:00-9:00 | Bridge: "We have a number. Now we go get it back." | `make reset` |
-| 9:00-14:00 | **Demo 3, the filter.** Four in-place redeploys, each bends the line. Money shot at step 4: reduction past 30%, errors intact. | `make demo SCENARIO=filter` |
-| 14:00-15:00 | Bridge: "What about the data you are required to keep?" | `make reset` |
-| 15:00-18:30 | **Demo 4, the tiers.** Cold lane at pennies, then rehydrate a window live. | `make demo SCENARIO=tiers`, then `make rehydrate FROM=... TO=...` |
+| 1:00-4:00 | **Demo 1, the tax.** Show `job describe 01-tax` reporting the job placed on the node. Real formats in, meter at full rate, reduction 0%. "This is the default." | `just demo --scenario tax` |
+| 4:00-8:00 | **Demo 2, the audit.** Parse at the edge, join volume against query patterns. | `just demo --scenario audit` (wait 60s, reads the local sample) |
+| 8:00-9:00 | Bridge: "We have a number. Now we go get it back." | `just reset` |
+| 9:00-14:00 | **Demo 3, the filter.** Four in-place redeploys, each bends the line. Money shot at step 4: reduction past 30%, errors intact. | `just demo --scenario filter` |
+| 14:00-15:00 | Bridge: "What about the data you are required to keep?" | `just reset` |
+| 15:00-18:30 | **Demo 4, the tiers.** Cold lane at pennies, then rehydrate a window live. | `just demo --scenario tiers`, then `just rehydrate <from> <to>` |
 | 18:30-20:00 | Close: "Every config you watched is a standard Expanso job YAML in this repo, and the deploy was a real cloud deploy. The same files go to 400 nodes by changing one label. Repo link, series link, calculator link." | |
 
-Pre-stage the `FROM`/`TO` timestamps for the rehydrate command in a scratch
+Pre-stage the from and to timestamps for the rehydrate command in a scratch
 buffer before the talk so you are not doing UTC math on stage. For a single
-recorded pillar with no pauses, use `make demo SCENARIO=filter NOPAUSE=1`.
+recorded pillar with no pauses, use `just demo --scenario filter --no-pause`.
 
 ---
 
@@ -343,17 +343,17 @@ recorded pillar with no pauses, use `make demo SCENARIO=filter NOPAUSE=1`.
 
 | Symptom | Fix |
 |---|---|
-| `make doctor` is red: no demo profile | You have not onboarded. Run `make cloud-setup`, then `source .demo-cloud.env`. |
-| Node shows **connecting**, not connected | The agent's outbound link is still coming up. Wait a few seconds and rerun `make doctor`. It connects out to the cloud; nothing inbound to open. |
-| Ports busy (8090, 8081, 5601, or a stale process) | `make clean`, then recheck stragglers: `pgrep -fl costboard; pgrep -fl expanso-edge; pgrep -fl logsim`. Kill anything left and rerun. |
-| Sims not flowing (dashboard lanes stay at zero) | Either the streams are not running or the intake job is not deployed yet. Run `make sims`; if still flat, redeploy the scenario (it carries `jobs/cloud/00-intake.yaml`). Sim logs are in `.run/sim-*.log`. |
-| First `make sims` is slow | `uvx` is pulling log-simulators from GitHub on first use. Pre-warm before the talk: `uvx --from git+https://github.com/expanso-io/log-simulators logsim-app --help`. |
+| `just doctor` is red: no demo profile | You have not onboarded. Run `just cloud-setup`, then `source .demo-cloud.env`. |
+| Node shows **connecting**, not connected | The agent's outbound link is still coming up. Wait a few seconds and rerun `just doctor`. It connects out to the cloud; nothing inbound to open. |
+| Ports busy (8090, 8081, 5601, or a stale process) | `just clean`, then recheck stragglers: `pgrep -fl costboard; pgrep -fl expanso-edge; pgrep -fl logsim`. Kill anything left and rerun. |
+| Sims not flowing (dashboard lanes stay at zero) | Either the streams are not running or the intake job is not deployed yet. Run `just sims`; if still flat, redeploy the scenario (it carries `jobs/cloud/00-intake.yaml`). Sim logs are in `.run/sim-*.log`. |
+| First `just sims` is slow | `uvx` is pulling log-simulators from GitHub on first use. Pre-warm before the talk: `uvx --from git+https://github.com/expanso-io/log-simulators logsim-app --help`. |
 | Want to confirm what the cloud placed | `expanso-cli job describe <name> --profile "$DEMO_PROFILE"` and `expanso-cli node list --profile "$DEMO_PROFILE"` (both read-only). |
-| No network at the venue | Present the offline path: `make demo-local`. Same scenarios, no cloud. |
-| Everything is weird, 2 minutes to showtime | `make clean && make doctor && make demo SCENARIO=tax`. If the venue network is down, `make clean && make demo-local`. |
+| No network at the venue | Present the offline path: `just demo-local`. Same scenarios, no cloud. |
+| Everything is weird, 2 minutes to showtime | `just clean && just doctor && just demo --scenario tax`. If the venue network is down, `just clean && just demo-local`. |
 
-After any demo session: `make clean`. It stops the costboard, the simulators,
+After any demo session: `just clean`. It stops the costboard, the simulators,
 the scenario jobs, and the local cold-storage state, and leaves your demo node
 and profile connected (cheap to keep, reused next run). Verify with
-`pgrep -fl costboard; pgrep -fl logsim` (no output means clean). `make clean`
+`pgrep -fl costboard; pgrep -fl logsim` (no output means clean). `just clean`
 never touches any profile other than the demo one.

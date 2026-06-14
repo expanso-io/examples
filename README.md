@@ -4,7 +4,7 @@ Runnable, self-contained examples for [Expanso Edge](https://expanso.io) and
 [Expanso Cloud](https://cloud.expanso.io). Every example is a complete project:
 standard Expanso job YAMLs, a local harness, deterministic tests, and an eval
 suite that reproduces every number its docs claim. Nothing here is a slideware
-pipeline; if an example says it cuts volume by 30%, `make eval` proves it on
+pipeline; if an example says it cuts volume by 30%, `just eval` proves it on
 your machine.
 
 Each example lives in its own directory and runs independently. Clone the

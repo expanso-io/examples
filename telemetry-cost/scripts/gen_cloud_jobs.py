@@ -14,7 +14,7 @@ comment byte-for-byte intact. The selector lands as a sibling of name/type/
 config (spec top level), NOT inside config.
 
 After writing each variant we validate it offline and confirm the selector is
-present. Any failure makes the whole run exit non-zero (so `make cloud-jobs`
+present. Any failure makes the whole run exit non-zero (so `just cloud-jobs`
 fails loudly in CI).
 """
 

@@ -2,7 +2,7 @@
 #
 # preflight.sh - the demo doctor.
 #
-# Checks the tools the demo needs (uv, expanso-edge, expanso-cli, python3,
+# Checks the tools the demo needs (just, uv, expanso-edge, expanso-cli, python3,
 # curl) and, unless --tools is passed, the Expanso Cloud readiness: a saved
 # demo profile whose dedicated edge node (label demo=telemetry-cost) is
 # connected to the control plane.
@@ -53,6 +53,13 @@ fix() { printf '      fix: %s\n' "$1"; }
 # --- tools -------------------------------------------------------------------
 
 printf '%sTools%s\n' "$BOLD" "$RST"
+
+if command -v just >/dev/null 2>&1; then
+  ok "just ($(just --version 2>/dev/null | head -1))"
+else
+  bad "just not found (the command runner for this example)"
+  fix "brew install just   # or: cargo install just / https://just.systems"
+fi
 
 if command -v uv >/dev/null 2>&1; then
   ok "uv ($(uv --version 2>/dev/null | head -1))"
@@ -160,11 +167,11 @@ if [ "$TOOLS_ONLY" -ne 1 ]; then
           ;;
         NONE)
           bad "no connected demo node on profile '$PROFILE' (label demo=telemetry-cost)"
-          fix "start it: nohup expanso-edge run --data-dir $ROOT/.edge-cloud & (or re-run: make cloud-setup)"
+          fix "start it: nohup expanso-edge run --data-dir $ROOT/.edge-cloud & (or re-run: just cloud-setup)"
           ;;
         CLIERR)
           bad "could not reach the control plane for profile '$PROFILE'"
-          fix "check the profile: expanso-cli profile show $PROFILE  (or re-run: make cloud-setup)"
+          fix "check the profile: expanso-cli profile show $PROFILE  (or re-run: just cloud-setup)"
           ;;
         *)
           bad "unexpected node list output for profile '$PROFILE'"
@@ -173,8 +180,8 @@ if [ "$TOOLS_ONLY" -ne 1 ]; then
       esac
     fi
   else
-    bad "no demo profile (run make cloud-setup)"
-    fix "make cloud-setup"
+    bad "no demo profile (run just cloud-setup)"
+    fix "just cloud-setup"
   fi
 fi
 
@@ -185,7 +192,7 @@ if [ "$FAILED" -eq 0 ]; then
   if [ "$TOOLS_ONLY" -eq 1 ]; then
     ok "all tool checks passed"
   else
-    ok "all checks passed - ready to run: make demo"
+    ok "all checks passed - ready to run: just demo"
   fi
   exit 0
 fi

@@ -123,7 +123,7 @@ config:
     # object per line so stdlib Python can stream it. There is no hot lane
     # here on purpose: demo 2 measures, it does not yet cut. The costboard
     # raw lane (fed by the 00-intake tee) is the "current bill" denominator,
-    # and `make audit` reads this file to show how much of that bill is
+    # and `just audit` reads this file to show how much of that bill is
     # garbage. Measurement without disruption.
     file:
       path: data/audit-sample.jsonl

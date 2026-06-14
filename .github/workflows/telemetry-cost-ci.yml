@@ -25,6 +25,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # just is the command runner for this example (replaces make).
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+            | bash -s -- --to "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       # uv powers `uvx`, which the fixtures step uses to run the public
       # log-simulators with no install step.
       - name: Install uv
@@ -60,7 +67,7 @@ jobs:
       # Seeded + time-anchored, so the generated fixtures are byte-identical to
       # the committed ones. Uses uvx to pull log-simulators from GitHub.
       - name: Regenerate fixtures (seeded)
-        run: make fixtures
+        run: just fixtures
 
       - name: Validate all jobs (offline)
         if: steps.expanso.outputs.have_expanso == 'true'

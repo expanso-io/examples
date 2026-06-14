@@ -40,7 +40,7 @@ CRI prefix plus embedded zap/klog for Kubernetes, CloudTrail and app JSON by
 shape. The classification rules live in one shared Bloblang block in the job
 YAMLs, with a reference implementation in `scripts/classify.py`.
 
-`make sims` starts all four streams locally; `make fixtures` regenerates the
+`just sims` starts all four streams locally; `just fixtures` regenerates the
 committed, seeded fixture files (byte-identical on every machine).
 
 ## Architecture
@@ -102,20 +102,20 @@ pipelines to it through the cloud. Full walkthrough in
 [QUICKSTART.md](QUICKSTART.md).
 
 ```bash
-# install uv, expanso-edge, expanso-cli (see QUICKSTART.md Step 0)
+# install just, uv, expanso-edge, expanso-cli (see QUICKSTART.md Step 0)
 git clone https://github.com/expanso-io/examples.git
 cd examples/telemetry-cost
 
-make cloud-setup    # one-time: create a network at cloud.expanso.io,
+just cloud-setup    # one-time: create a network at cloud.expanso.io,
                     # bootstrap this laptop as a demo node, save a CLI profile
-make demo           # the cloud schedules the jobs onto your node;
+just demo           # the cloud schedules the jobs onto your node;
                     # watch the dollar meter at http://localhost:8090
 ```
 
-`make demo SCENARIO=tax` (or `audit`, `filter`, `tiers`) runs one scenario.
-`make demo SCENARIO=filter NOPAUSE=1` is the no-pause B-roll mode for clean
-screen recordings. `make doctor` checks tools and cloud connectivity if a run
-will not start. `make clean` stops everything and leaves your node and profile
+`just demo --scenario tax` (or `audit`, `filter`, `tiers`) runs one scenario.
+`just demo --scenario filter --no-pause` is the no-pause B-roll mode for clean
+screen recordings. `just doctor` checks tools and cloud connectivity if a run
+will not start. `just clean` stops everything and leaves your node and profile
 in place (reused next run).
 
 The demo node is dedicated: it carries the label `demo=telemetry-cost` and
@@ -128,14 +128,14 @@ No account needed. A local Expanso Edge node in `--local` mode plays the fleet;
 this is also what CI and the eval harness use.
 
 ```bash
-# install uv, expanso-edge, expanso-cli (see QUICKSTART.md Step 0)
+# install just, uv, expanso-edge, expanso-cli (see QUICKSTART.md Step 0)
 git clone https://github.com/expanso-io/examples.git
 cd examples/telemetry-cost
 
-make demo-local     # local edge + dashboard, same scenarios, same numbers
+just demo-local     # local edge + dashboard, same scenarios, same numbers
 ```
 
-Requires Linux or macOS, Python 3.10+, `make`, and
+Requires Linux or macOS, Python 3.10+, `just` (`brew install just`), and
 [uv](https://docs.astral.sh/uv/) (for `uvx`). Same dashboard at
 http://localhost:8090.
 
@@ -155,9 +155,9 @@ http://localhost:8090 either way.
 
 ## The four demos
 
-The four scenarios are what `make demo` walks through against the cloud (and
-`make demo-local` walks through offline). The granular `make demoN` and
-`make demo3-stepN` targets shown below drive each pillar by hand on the local
+The four scenarios are what `just demo` walks through against the cloud (and
+`just demo-local` walks through offline). The granular `just demoN` and
+`just demo3-stepN` recipes shown below drive each pillar by hand on the local
 path, which is handy when you want to linger on a single rule.
 
 ### Demo 1: The Tax
@@ -167,8 +167,8 @@ anyone knows if it is worth anything. This is the control group, and for most
 teams it is also the current architecture.
 
 ```bash
-make demo1
-make sims
+just demo1
+just sims
 ```
 
 **Watch:** the hot lane tracks the raw lane byte for byte. Reduction sits at
@@ -179,15 +179,15 @@ make sims
 **The claim:** you can prove what fraction of your ingest is garbage in about
 30 minutes, using nothing but volume-versus-queries data. The pipeline parses
 all four formats at the edge and tees a classified sample to disk;
-`make audit` joins volume against query-likelihood rules.
+`just audit` joins volume against query-likelihood rules.
 
 ```bash
-make demo2
-make sims
-make audit
+just demo2
+just sims
+just audit
 ```
 
-**Watch:** `make audit` prints the volume-vs-queried table and the garbage
+**Watch:** `just audit` prints the volume-vs-queried table and the garbage
 ratio: which patterns are billed constantly and queried never. The rules are
 heuristics standing in for your real SIEM query logs, documented honestly in
 `scripts/audit.py` and `scripts/classify.py`. In production you would run the
@@ -202,12 +202,12 @@ parsed real formats: health-check paths in NCSA and ingress lines, klog and
 zap severities in CRI payloads, duplicate crash-loop signatures.
 
 ```bash
-make demo3-step1   # drop health checks (NCSA paths, k8s probes)
-make demo3-step2   # + drop debug-level chatter
-make demo3-step3   # + dedupe crash-loop duplicates (same zap caller+msg)
-make demo3-step4   # + keep 100% of error/warn/slow, sample 10% of the rest
-make demo3         # shortcut for step 4
-make sims          # if the streams are not already running
+just demo3-step1   # drop health checks (NCSA paths, k8s probes)
+just demo3-step2   # + drop debug-level chatter
+just demo3-step3   # + dedupe crash-loop duplicates (same zap caller+msg)
+just demo3-step4   # + keep 100% of error/warn/slow, sample 10% of the rest
+just demo3         # shortcut for step 4
+just sims          # if the streams are not already running
 ```
 
 **Watch:** each step bends the hot lane down while the raw lane keeps
@@ -223,9 +223,9 @@ storage at about $0.023/GB-month, not in your SIEM at ingest prices, and you
 can still pull a window back out the day the auditor calls.
 
 ```bash
-make demo4
-make sims
-make rehydrate FROM=2026-06-10T19:00:00Z TO=2026-06-10T20:00:00Z
+just demo4
+just sims
+just rehydrate 2026-06-10T19:00:00Z 2026-06-10T20:00:00Z
 ```
 
 **Watch:** lines route three ways. Junk is dropped, signal goes hot,
@@ -233,7 +233,7 @@ compliance-only lines go cold as gzip files partitioned by hour under
 `cold-storage/`. The cold meter reads pennies per month next to the hot
 meter. The rehydrate command pulls the requested window back out, raw lines
 verbatim (cold storage keeps original bytes, so the window is selected by
-receive-hour partition; add `GREP='POST /login'` to narrow).
+receive-hour partition; add a third argument `'POST /login'` to narrow).
 
 ## Pricing presets
 
@@ -247,7 +247,7 @@ prices as of June 2026**, not quotes:
 | `cold_per_gb_month` | 0.023 | S3 standard, $/GB-month |
 
 Your vendor, your discount, your numbers: edit the file and restart the board
-(`PRESETS_FILE=my-presets.json make board`, or `--presets path`). If you think
+(`PRESETS_FILE=my-presets.json just board`, or `--presets path`). If you think
 a default is wrong, the file is one PR away.
 
 ## Run this on a real fleet
@@ -282,7 +282,7 @@ the meter is the same artifact you ship to 400 real nodes.
 QUICKSTART.md          three-step cloud-first front door
 DEMO.md                presenter runbook (cloud-first)
 jobs/                  the Expanso job YAMLs (intake tee + the four demos)
-jobs/cloud/            selector-injected variants (generated by make cloud-jobs)
+jobs/cloud/            selector-injected variants (generated by just cloud-jobs)
 costboard/             stdlib-only Python dashboard + meter
 fixtures/              seeded log-simulators output, committed (eval ground truth)
 scripts/               demo.sh, cloud_setup.sh, preflight.sh, classify.py, audit.py, rehydrate.py

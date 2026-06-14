@@ -6,7 +6,7 @@
 # data dir so it never collides with any other Expanso node on this machine,
 # saves a demo profile, and waits for the node to connect to the control plane.
 # After this you deploy job YAMLs through cloud.expanso.io onto that node:
-#   make demo
+#   just demo
 #
 # Idempotent: if a connected demo node and a saved profile already exist, it
 # skips straight to verification. Re-running with a fresh bootstrap token
@@ -101,7 +101,7 @@ if profile_exists "$PROFILE" && [ "$(node_state "$PROFILE")" = "CONNECTED" ]; th
   print_node_row
   write_env
   say ""
-  ok "Setup already complete -> run: make demo"
+  ok "Setup already complete -> run: just demo"
   exit 0
 fi
 
@@ -197,4 +197,4 @@ step "8/8  Saving demo config"
 write_env
 
 say ""
-ok "Setup done -> run: make demo"
+ok "Setup done -> run: just demo"

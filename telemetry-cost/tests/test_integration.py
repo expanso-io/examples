@@ -144,7 +144,7 @@ def stack():
     if not (ROOT / "costboard" / "server.py").exists():
         pytest.skip("costboard/server.py not built yet")
     if not _port_free(8090):
-        pytest.skip("port 8090 busy — stop the demo costboard first (make clean)")
+        pytest.skip("port 8090 busy — stop the demo costboard first (just clean)")
     if not _port_free(19014):
         pytest.skip("port 19014 busy")
 
