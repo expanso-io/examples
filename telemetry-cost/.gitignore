@@ -1,0 +1,12 @@
+.edge-data*
+.edge-cloud/
+.demo-cloud.env
+.run/
+data/
+cold-storage/
+__pycache__/
+*.pyc
+.DS_Store
+.ptest*
+nohup.out
+.venv

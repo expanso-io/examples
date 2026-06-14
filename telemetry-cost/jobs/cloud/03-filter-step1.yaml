@@ -1,0 +1,128 @@
+# Demo 3, step 1 — Drop the obvious junk
+#
+# The audit (demo 2) showed most of the bill is lines nobody would ever
+# query. Start with the safest possible cut: health-check traffic — /health,
+# /healthz, /ready, /livez, /metrics probes and kube-probe requests. They
+# exist only to prove a process is alive in the moment; they have zero
+# forensic value five seconds later, and nobody has ever grepped one in anger.
+name: 03-filter
+description: "Filter step 1: drop health-check and probe traffic at the edge."
+type: pipeline
+selector:
+  match_labels:
+    demo: telemetry-cost
+config:
+  input:
+    # WHY: same intake as demo 1 — the intake tee (00-intake) POSTs each raw
+    # log line here exactly as it left the source.
+    http_server:
+      address: 0.0.0.0:8081
+      path: /ingest
+
+  pipeline:
+    processors:
+      # WHY: stash the original line FIRST. Decisions are made on parsed
+      # working fields, but what ships to the hot tier is the original bytes —
+      # the bill is only honest if the lanes carry exactly what the source
+      # emitted. content() works whether or not the line is JSON; `this`
+      # would choke on NCSA and CRI lines.
+      - mapping: |
+          root = {"_raw": content().string()}
+
+      # WHY: one classification pass, shared verbatim by demos 2–4 and
+      # mirrored by scripts/classify.py (the reference implementation the
+      # evals compare against). Detection order matters: JSON shapes are
+      # unambiguous, the CRI prefix is next, NCSA is the loosest pattern,
+      # and anything unrecognized passes through as "unknown" — never drop
+      # what you can't identify.
+      - mapping: |
+          root = this
+          let raw = this._raw
+
+          # Sources 1+2 — JSON lines: CloudTrail carries eventVersion; app
+          # logs carry level+service. One parse attempt covers both.
+          let parsed = $raw.parse_json().catch(null)
+          let is_ct  = $parsed.type() == "object" && $parsed.exists("eventVersion")
+          let is_app = !$is_ct && $parsed.type() == "object" && $parsed.exists("level") && $parsed.exists("service")
+
+          # Source 3 — Kubernetes CRI: "<RFC3339Nano> stdout|stderr F <payload>".
+          # The payload is re-parsed: embedded zap JSON, klog prefix, or an
+          # nginx-ingress access line (which gets web semantics below).
+          let is_k8s = !$is_ct && !$is_app && $raw.re_match("^\\d{4}-\\d{2}-\\d{2}T\\S+ (stdout|stderr) [FP] ")
+          let kpay = if $is_k8s { $raw.re_find_object("^\\S+ (stdout|stderr) [FP] (?P<payload>.*)$").payload.string().catch("") } else { "" }
+          let zap = if $kpay != "" { $kpay.parse_json().catch(null) } else { null }
+          let is_zap = $zap.type() == "object"
+          # NOTE: re_find_object yields null (not an error) on no match, so
+          # every match result below is guarded with a type() check.
+          let klog = if $is_k8s && !$is_zap { $kpay.re_find_object("^(?P<sev>[IWEF])\\d{4} ") } else { null }
+          let klog_sev = if $klog.type() == "object" { $klog.sev.string().catch("") } else { "" }
+
+          # Source 4 — NCSA access lines: bare (web server) or embedded in a
+          # CRI payload (nginx-ingress). Same regex, same semantics.
+          let web  = if !$is_ct && !$is_app && !$is_k8s { $raw.re_find_object("^(?P<ip>\\S+) \\S+ \\S+ \\[[^\\]]+\\] \"(?P<method>\\S+) (?P<path>\\S+)[^\"]*\" (?P<status>\\d{3}) \\S+( \"[^\"]*\" \"(?P<ua>[^\"]*)\")?").catch(null) } else { null }
+          let kweb = if $is_k8s && !$is_zap && $klog_sev == "" { $kpay.re_find_object("^(?P<ip>\\S+) \\S+ \\S+ \\[[^\\]]+\\] \"(?P<method>\\S+) (?P<path>\\S+)[^\"]*\" (?P<status>\\d{3}) \\S+( \"[^\"]*\" \"(?P<ua>[^\"]*)\")?").catch(null) } else { null }
+          let is_web = $web.type() == "object"
+          let acc = if $is_web { $web } else if $kweb.type() == "object" { $kweb } else { null }
+          let is_acc = $acc.type() == "object"
+
+          # Working values the access-line semantics need.
+          let status = if $is_acc { $acc.status.number().catch(0) } else { 0 }
+          let method = if $is_acc { $acc.method.or("") } else { "" }
+          let path = if $is_app { $parsed.http.path.string().catch("") } else if $is_acc { $acc.path.or("") } else { "" }
+          let ua = if $is_acc { $acc.ua.or("") } else { "" }
+
+          # Classified working fields — the contract demos 3 and 4 filter on.
+          let level = if $is_ct { "info" }
+            else if $is_app { $parsed.level.string().lowercase().catch("info") }
+            else if $is_zap { $zap.level.string().lowercase().catch("info") }
+            else if $klog_sev == "E" || $klog_sev == "F" { "error" }
+            else if $klog_sev == "W" { "warn" }
+            else if $status >= 500 { "error" }
+            else if $is_acc && $status >= 400 { "warn" }
+            else { "info" }
+          let is_health = $path.re_match("^/(health|healthz|ready|livez|metrics)($|[/?])") || $ua.contains("kube-probe")
+          let slow = $is_app && $parsed.duration_ms.number().catch(0) > 2000
+          let is_auth = ($is_app && $parsed.service.string().catch("") == "auth") || ($is_acc && $method == "POST" && $path.has_prefix("/login"))
+          let is_static = $is_acc && $status < 400 && $path.re_match("\\.(css|js|png|jpe?g|gif|ico|svg|woff2?)$")
+
+          root.src = if $is_ct { "cloudtrail" } else if $is_app { "app" } else if $is_k8s { "k8s" } else if $is_web { "web" } else { "unknown" }
+          root.level = $level
+          root.is_health = $is_health
+          root.is_debug = $level == "debug"
+          # WHY dup_key: a crash-looping pod logs the SAME structured error
+          # again and again — zap's caller+msg identifies the repeat. Only k8s
+          # zap lines get a key; everything else stays null (never deduped).
+          root.dup_key = if $is_zap { $zap.caller.string().catch("?") + "|" + $zap.msg.string().catch("?") } else { null }
+          root.slow = $slow
+          # WHY retain: compliance-grade trails — cloud audit events, auth
+          # service activity, login attempts — must be KEPT, which is not the
+          # same as paying hot-index prices for them (demo 4's whole point).
+          root.retain = $is_ct || $is_auth
+          # WHY queried_class: an honest heuristic for "would a human ever
+          # query this?" — errors/warnings/auth get looked at regularly, slow
+          # requests rarely, health probes and debug spam never.
+          root.queried_class = if ["error", "warn"].contains($level) || $is_auth { "regular" }
+            else if $slow { "rare" }
+            else if $is_health || $level == "debug" || $is_static { "never" }
+            else { "rare" }
+
+
+      # WHY (step 1): deleting at the edge means these lines never leave the
+      # site — no egress, no ingest fee, no index bloat. `deleted()` removes
+      # the message from the stream entirely; everything else passes through.
+      - mapping: |
+          root = if this.is_health { deleted() }
+
+      # WHY: ship the ORIGINAL line, not our parsed envelope. The working
+      # fields existed only to make the keep/drop decision — the hot tier
+      # receives exactly the bytes the source emitted, so the reduction
+      # number is real, not an artifact of re-serialization.
+      - mapping: |
+          root = this._raw
+
+  output:
+    # WHY: whatever survives the filters goes to the hot (indexed, per-GB +
+    # per-event billed) tier — same destination as demo 1, smaller bill.
+    http_client:
+      url: http://localhost:8090/ingest/hot
+      verb: POST

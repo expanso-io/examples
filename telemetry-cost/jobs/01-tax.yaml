@@ -1,0 +1,36 @@
+# Demo 1 — The Telemetry Tax
+#
+# This is the "before" picture: every line the fleet emits ships straight to
+# the hot observability tier, untouched. Health probes, debug spam, crash-loop
+# repeats, CloudTrail boilerplate — all of it lands on the meter. Run this
+# against the live intake tee and watch the costboard dollar counter climb in
+# lockstep with the raw lane. That's the tax.
+name: 01-tax
+description: "Ship every raw line to the hot tier. The meter runs on every byte."
+type: pipeline
+config:
+  input:
+    # WHY: the pipeline fronts the fleet as a plain HTTP endpoint — the same
+    # shape as a vendor agent's intake. The intake tee (00-intake) POSTs each
+    # raw log line here exactly as it left the source.
+    http_server:
+      address: 0.0.0.0:8081
+      path: /ingest
+
+  pipeline:
+    processors:
+      # WHY: lines arrive as raw bytes — app JSON, k8s CRI, NCSA access lines,
+      # CloudTrail JSON — and this scenario does NOTHING to them. We touch the
+      # message only via content() (never `this`, which would demand JSON) so
+      # the line passes through byte-for-byte. Billing is honest: hot bytes
+      # here must equal raw bytes on the costboard.
+      - mapping: |
+          root = content().string()
+
+  output:
+    # WHY: straight to the hot (indexed, per-GB + per-event billed) tier.
+    # No filtering, no routing — this scenario exists to establish the
+    # baseline cost that demos 3 and 4 attack.
+    http_client:
+      url: http://localhost:8090/ingest/hot
+      verb: POST

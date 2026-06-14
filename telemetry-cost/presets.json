@@ -1,0 +1,6 @@
+{
+  "_note": "Editable estimates, list prices as of June 2026. hot_per_gb_ingest: Datadog-style per-GB log ingest. hot_per_million_events: 15-day indexing per million events. cold_per_gb_month: S3 Standard per GB-month.",
+  "hot_per_gb_ingest": 0.10,
+  "hot_per_million_events": 1.70,
+  "cold_per_gb_month": 0.023
+}

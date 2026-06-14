@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>costboard — telemetry cost meter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0d13;
+    --panel: rgba(20, 26, 38, 0.62);
+    --line: rgba(120, 150, 200, 0.14);
+    --ink: #dfe7f3;
+    --dim: #76839b;
+    --amber: #ffb454;
+    --amber-deep: #ff8a3d;
+    --teal: #39d2c0;
+    --green: #4ade80;
+    --red: #f87171;
+    --blue: #60a5fa;
+    --sans: "Space Grotesk", "Avenir Next", "Trebuchet MS", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "Menlo", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background:
+      radial-gradient(1100px 620px at 18% -8%, rgba(255, 138, 61, 0.13), transparent 60%),
+      radial-gradient(900px 700px at 96% 104%, rgba(57, 210, 192, 0.10), transparent 60%),
+      radial-gradient(700px 500px at 70% 20%, rgba(96, 165, 250, 0.05), transparent 65%),
+      linear-gradient(175deg, #0d1119 0%, var(--bg) 45%, #070a0f 100%);
+    color: var(--ink);
+    font-family: var(--sans);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: clamp(8px, 1.6vh, 18px);
+    padding: clamp(14px, 2.4vh, 28px) clamp(18px, 2.6vw, 40px);
+  }
+  body::after { /* vignette for depth when projected */
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(120% 120% at 50% 45%, transparent 55%, rgba(0,0,0,0.42));
+  }
+
+  header { display: flex; align-items: baseline; gap: 14px; }
+  header h1 { font-size: clamp(15px, 1.7vw, 21px); font-weight: 700; letter-spacing: 0.04em; }
+  header h1 .x { color: var(--amber); }
+  header .sub { color: var(--dim); font-size: clamp(11px, 1.1vw, 13px); letter-spacing: 0.02em; }
+  header .live { margin-left: auto; display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 11px; color: var(--dim); letter-spacing: 0.08em; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+    box-shadow: 0 0 10px var(--green); transition: background .3s, box-shadow .3s; }
+  .dot.stale { background: var(--red); box-shadow: 0 0 10px var(--red); }
+
+  main { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    gap: clamp(10px, 1.6vw, 22px); min-height: 0; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    backdrop-filter: blur(6px);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 12px 40px rgba(0,0,0,0.35);
+    padding: clamp(12px, 2vh, 24px) clamp(14px, 1.8vw, 26px);
+    display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  }
+  .label { font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--dim); font-weight: 500; }
+
+  /* THE meter */
+  #meterCard { justify-content: center; position: relative;
+    background:
+      radial-gradient(85% 130% at 25% 0%, rgba(255, 138, 61, 0.12), transparent 55%),
+      var(--panel); }
+  #meterCard .label b { color: var(--amber); letter-spacing: 0.22em; }
+  #hotCost {
+    font-family: var(--mono); font-weight: 600;
+    font-size: clamp(48px, 8.6vw, 132px);
+    line-height: 1.05; letter-spacing: -0.02em;
+    color: var(--amber);
+    text-shadow: 0 0 28px rgba(255, 180, 84, 0.45), 0 0 90px rgba(255, 138, 61, 0.22);
+    font-variant-numeric: tabular-nums;
+  }
+  #meterCard .since { font-family: var(--mono); font-size: clamp(10px, 1vw, 12px);
+    color: var(--dim); margin-top: 6px; }
+
+  .right { display: grid; grid-template-rows: 1fr 1fr; gap: clamp(10px, 1.6vh, 22px); min-height: 0; }
+  #coldCost { font-family: var(--mono); font-weight: 500;
+    font-size: clamp(26px, 3.4vw, 52px); color: var(--teal);
+    text-shadow: 0 0 22px rgba(57, 210, 192, 0.30);
+    font-variant-numeric: tabular-nums; margin-top: auto; }
+  .unit { font-size: 0.42em; color: var(--dim); letter-spacing: 0.04em; }
+
+  #reduceCard { transition: border-color .6s, box-shadow .6s; }
+  #reduction { font-family: var(--mono); font-weight: 600;
+    font-size: clamp(26px, 3.4vw, 52px); color: var(--dim);
+    font-variant-numeric: tabular-nums; margin-top: auto;
+    transition: color .6s, text-shadow .6s; }
+  #reduceCard.active { border-color: rgba(74, 222, 128, 0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04),
+      0 0 36px rgba(74, 222, 128, 0.18), 0 12px 40px rgba(0,0,0,0.35); }
+  #reduceCard.active #reduction { color: var(--green);
+    text-shadow: 0 0 26px rgba(74, 222, 128, 0.55); }
+  #reduceCard .hint { font-size: 11px; color: var(--dim); margin-top: 4px; }
+
+  /* lanes */
+  .lanes { display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: clamp(10px, 1.6vw, 22px); }
+  .lane { border-top: 2px solid var(--line); }
+  .lane h2 { font-size: 12px; letter-spacing: 0.22em; font-weight: 700;
+    display: flex; align-items: center; gap: 8px; }
+  .lane .bytes { font-family: var(--mono); font-size: clamp(18px, 2.3vw, 34px);
+    font-weight: 500; margin-top: clamp(4px, 1vh, 10px);
+    font-variant-numeric: tabular-nums; }
+  .lane .events { font-family: var(--mono); font-size: clamp(10px, 1vw, 13px);
+    color: var(--dim); margin-top: 2px; }
+  .lane .bar { height: 4px; border-radius: 2px; background: rgba(120,150,200,0.12);
+    margin-top: clamp(6px, 1.2vh, 12px); overflow: hidden; }
+  .lane .bar i { display: block; height: 100%; width: 0%; border-radius: 2px;
+    transition: width .8s cubic-bezier(.22,1,.36,1); }
+  #laneRaw  { border-top-color: var(--blue); }  #laneRaw  h2 { color: var(--blue); }
+  #laneRaw  .bar i { background: linear-gradient(90deg, #2563eb, var(--blue)); }
+  #laneHot  { border-top-color: var(--amber); } #laneHot  h2 { color: var(--amber); }
+  #laneHot  .bar i { background: linear-gradient(90deg, var(--amber-deep), var(--amber)); }
+  #laneCold { border-top-color: var(--teal); }  #laneCold h2 { color: var(--teal); }
+  #laneCold .bar i { background: linear-gradient(90deg, #0e9488, var(--teal)); }
+
+  .chips { display: flex; gap: 6px; margin-left: auto; }
+  .chip { font-family: var(--mono); font-size: 10px; padding: 2px 7px;
+    border-radius: 999px; border: 1px solid var(--line); color: var(--dim);
+    letter-spacing: 0.04em; }
+  .chip.ERROR { color: var(--red); border-color: rgba(248,113,113,0.4); }
+  .chip.WARN  { color: var(--amber); border-color: rgba(255,180,84,0.4); }
+  .chip.INFO  { color: var(--blue); border-color: rgba(96,165,250,0.4); }
+  .chip.DEBUG { color: var(--dim); }
+</style>
+</head>
+<body>
+  <header>
+    <h1>cost<span class="x">board</span></h1>
+    <span class="sub">telemetry spend, metered live — Expanso Edge demo</span>
+    <span class="live"><span class="dot" id="dot"></span><span id="clock">—</span></span>
+  </header>
+
+  <main>
+    <section class="card" id="meterCard">
+      <span class="label">hot ingest cost — <b>running</b></span>
+      <div id="hotCost">$0.000000</div>
+      <div class="since">since <span id="since">—</span> · per-GB ingest + per-1M-event indexing</div>
+    </section>
+
+    <div class="right">
+      <section class="card">
+        <span class="label">cold storage cost</span>
+        <div id="coldCost"><span id="coldVal">$0.000000</span> <span class="unit">/ month</span></div>
+      </section>
+      <section class="card" id="reduceCard">
+        <span class="label">hot-lane reduction</span>
+        <div id="reduction"><span id="redVal">0.0</span><span class="unit">%</span></div>
+        <div class="hint">1 − hot bytes ÷ raw bytes · the pipeline’s paycheck</div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="lanes">
+    <section class="card lane" id="laneRaw">
+      <h2>RAW</h2>
+      <div class="bytes" id="rawBytes">0 B</div>
+      <div class="events"><span id="rawEvents">0</span> events emitted</div>
+      <div class="bar"><i id="rawBar" style="width:100%"></i></div>
+    </section>
+    <section class="card lane" id="laneHot">
+      <h2>HOT <span class="chips" id="chips"></span></h2>
+      <div class="bytes" id="hotBytes">0 B</div>
+      <div class="events"><span id="hotEvents">0</span> events indexed</div>
+      <div class="bar"><i id="hotBar"></i></div>
+    </section>
+    <section class="card lane" id="laneCold">
+      <h2>COLD</h2>
+      <div class="bytes" id="coldBytes">0 B</div>
+      <div class="events"><span id="coldEvents">0</span> events archived</div>
+      <div class="bar"><i id="coldBar"></i></div>
+    </section>
+  </footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+function fmtBytes(n) {
+  if (n < 1000) return n + " B";
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n, i = -1;
+  while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
+  return v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2) + " " + units[i];
+}
+function fmtMoney(v) {
+  const dec = v >= 100 ? 2 : v >= 1 ? 4 : 6;
+  return "$" + v.toLocaleString("en-US",
+    { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+const fmtInt = (n) => n.toLocaleString("en-US");
+
+/* smooth count-up so the meter feels alive between 1s polls */
+const tweens = {};
+function tween(id, target, render) {
+  const t = tweens[id] || (tweens[id] = { cur: 0 });
+  t.target = target; t.render = render;
+  if (t.raf) return;
+  const step = () => {
+    const d = t.target - t.cur;
+    if (Math.abs(d) < 1e-9) { t.cur = t.target; t.render(t.cur); t.raf = null; return; }
+    t.cur += d * 0.14;
+    t.render(t.cur);
+    t.raf = requestAnimationFrame(step);
+  };
+  t.raf = requestAnimationFrame(step);
+}
+
+const LEVELS = ["ERROR", "WARN", "INFO", "DEBUG"];
+let lastOk = 0;
+
+function paint(s) {
+  tween("hot$", s.hot.cost_usd, (v) => { $("hotCost").textContent = fmtMoney(v); });
+  tween("cold$", s.cold.cost_usd_month, (v) => {
+    $("coldVal").textContent = fmtMoney(v);
+  });
+
+  const red = s.reduction_pct;
+  $("redVal").textContent = red.toFixed(1);
+  $("reduceCard").classList.toggle("active", red > 0);
+
+  $("rawBytes").textContent = fmtBytes(s.raw.bytes);
+  $("rawEvents").textContent = fmtInt(s.raw.events);
+  $("hotBytes").textContent = fmtBytes(s.hot.bytes);
+  $("hotEvents").textContent = fmtInt(s.hot.events);
+  $("coldBytes").textContent = fmtBytes(s.cold.bytes);
+  $("coldEvents").textContent = fmtInt(s.cold.events);
+
+  const denom = Math.max(s.raw.bytes, 1);
+  $("hotBar").style.width = Math.min(100, s.hot.bytes / denom * 100) + "%";
+  $("coldBar").style.width = Math.min(100, s.cold.bytes / denom * 100) + "%";
+
+  const by = s.hot.events_by_level || {};
+  const chips = $("chips");
+  chips.replaceChildren(...LEVELS.filter((l) => by[l]).map((l) => {
+    const el = document.createElement("span");
+    el.className = "chip " + l;          // l is from the fixed LEVELS list
+    el.textContent = l + " " + fmtInt(by[l]);
+    return el;
+  }));
+
+  $("since").textContent = s.started_at.replace("T", " ").slice(0, 19) + "Z";
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/stats", { cache: "no-store" });
+    paint(await res.json());
+    lastOk = Date.now();
+  } catch (e) { /* keep last numbers on screen */ }
+  $("dot").classList.toggle("stale", Date.now() - lastOk > 3500);
+  $("clock").textContent = new Date().toISOString().slice(11, 19) + "Z";
+}
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>

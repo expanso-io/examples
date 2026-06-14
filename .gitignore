@@ -1,0 +1,23 @@
+# Aggregate of per-example ignore patterns.
+
+# Expanso Edge local state
+.edge-data*
+
+# Process / pidfile dir (make sims, make edge)
+.run/
+
+# Generated demo state
+data/
+cold-storage/
+
+# Python
+__pycache__/
+*.pyc
+.venv
+.pytest_cache/
+.ruff_cache/
+
+# Misc
+.DS_Store
+.ptest*
+nohup.out

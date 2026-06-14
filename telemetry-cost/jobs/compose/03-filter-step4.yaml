@@ -1,0 +1,64 @@
+# COMPOSE VARIANT of jobs/03-filter-step4.yaml — costboard reached by service hostname
+# (http://costboard:8090) instead of localhost. Only the URLs differ.
+# Demo 3, step 4 — Severity-aware sampling. THE demo.
+#
+# Steps 1–3 plus the move that separates filtering from guesswork: keep 100%
+# of what matters, sample the rest. Every ERROR and WARN ships. Every slow
+# request (duration_ms > 2000) ships — latency outliers are how incidents
+# announce themselves. The remaining routine INFO chatter is sampled at ~10%:
+# enough to see traffic shape and baseline behavior, at a tenth of the cost.
+#
+# The point of the whole series: this is NOT "log less". It's "pay for
+# signal, not for noise" — and the decision runs at the edge, before a single
+# byte crosses the meter.
+name: 03-filter-step4
+description: "Filter step 4: keep 100% of ERROR/WARN/slow, sample ~10% of routine INFO."
+type: pipeline
+config:
+  cache_resources:
+    # WHY: backing store for crash-loop dedupe (see step 3). 60s TTL turns a
+    # firehose of identical errors into one event per minute.
+    - label: dedupe_cache
+      memory:
+        default_ttl: 60s
+
+  input:
+    http_server:
+      address: 0.0.0.0:8081
+      path: /ingest
+
+  pipeline:
+    processors:
+      # WHY: normalize string-or-object payloads into a structured event once,
+      # up front (see demo 1 for the full rationale).
+      - mapping: |
+          root = if this.type() == "string" { this.parse_json() } else { this }
+
+      # WHY (step 1): health checks and heartbeats have zero forensic value
+      # after the moment they were emitted. Delete at the edge.
+      - mapping: |
+          root = if ["health", "heartbeat"].contains(this.kind) { deleted() }
+
+      # WHY (step 2): DEBUG is developer-time output, not production signal.
+      - mapping: |
+          root = if this.level == "DEBUG" { deleted() }
+
+      # WHY (step 3): keep the first event of a crash-loop burst, drop the
+      # echoes. uuid_v4() fallback exempts everything without a dup_key.
+      - dedupe:
+          cache: dedupe_cache
+          key: ${! this.dup_key.or(uuid_v4()) }
+
+      # WHY (step 4): the keep-list is explicit — ERROR/WARN (incidents) and
+      # slow requests (latency outliers) ALWAYS ship; .or(0) guards events
+      # that have no duration_ms field. Everything else is routine INFO, and
+      # random_int(max: 99) gives a uniform 0–99 roll: values 0–9 (~10%) keep
+      # the event as a statistical sample, 10–99 delete it. You keep the
+      # shape of the traffic; you stop paying for its bulk.
+      - mapping: |
+          root = if !(["ERROR", "WARN"].contains(this.level) || this.duration_ms.or(0) > 2000) && random_int(max: 99) >= 10 { deleted() }
+
+  output:
+    http_client:
+      url: http://costboard:8090/ingest/hot
+      verb: POST

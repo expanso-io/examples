@@ -1,0 +1,53 @@
+# Intake — the tee that makes honest billing possible
+#
+# This is the front door for the whole demo. The log-simulators stream raw
+# lines (app JSON, k8s CRI, web NCSA, CloudTrail JSON) at a single TCP socket.
+# Intake does NO parsing and NO filtering — it preserves the original bytes
+# exactly as they arrived and fans them out two ways:
+#
+#   /ingest/raw  -> the costboard's "before" lane. This is the meter reading
+#                   for "ship everything", the number every later demo is
+#                   measured against. Because we tee the bytes untouched here,
+#                   the raw lane is byte-for-byte what an unfiltered agent
+#                   would have sent to the vendor.
+#   :8081/ingest -> the scenario pipeline (01-tax .. 04-tiers), which parses,
+#                   classifies, filters, and then re-emits the ORIGINAL raw
+#                   line so the hot/cold lanes are billed in real bytes too.
+#
+# Keeping intake dumb is the whole point: the "before" and "after" numbers
+# come from the same byte stream, so the reduction percentage is real.
+name: 00-intake
+description: "Pure tee: receive raw log lines and fan out to the costboard raw lane and the scenario pipeline. No parsing."
+type: pipeline
+selector:
+  match_labels:
+    demo: telemetry-cost
+config:
+  input:
+    # WHY: the simulators emit newline-delimited log lines over TCP
+    # (`--output tcp://localhost:5601`). socket_server with the lines scanner
+    # turns each newline-terminated chunk into one message, bytes intact.
+    socket_server:
+      network: tcp
+      address: 0.0.0.0:5601
+      scanner:
+        lines: {}
+
+  output:
+    # WHY: fan_out delivers every line to BOTH destinations. No processors,
+    # no mapping — the message content stays exactly the raw bytes we read off
+    # the socket, so both the costboard raw lane and the scenario pipeline see
+    # identical, unmodified input.
+    broker:
+      pattern: fan_out
+      outputs:
+        # WHY: the costboard "before" meter. Counts bytes + events for the raw
+        # lane — the cost of shipping everything, untouched.
+        - http_client:
+            url: http://localhost:8090/ingest/raw
+            verb: POST
+        # WHY: hand the same raw line to the scenario pipeline's http_server
+        # intake. Everything downstream (parse/classify/filter) happens there.
+        - http_client:
+            url: http://localhost:8081/ingest
+            verb: POST

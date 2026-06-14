@@ -1,0 +1,38 @@
+# COMPOSE VARIANT of jobs/01-tax.yaml — costboard reached by service hostname
+# (http://costboard:8090) instead of localhost. Only the URLs differ.
+# Demo 1 — The Telemetry Tax
+#
+# This is the "before" picture: every event the fleet emits ships straight to
+# the hot observability tier, untouched. Health checks, heartbeats, DEBUG spam,
+# crash-loop duplicates — all of it lands on the meter. Run this against the
+# generator and watch the costboard dollar counter climb. That's the tax.
+name: 01-tax
+description: "Ship everything raw to the hot tier. The meter runs on every byte."
+type: pipeline
+config:
+  input:
+    # WHY: the pipeline fronts the fleet as a plain HTTP endpoint — the same
+    # shape as a vendor agent's intake. The generator (or anything else)
+    # POSTs events here.
+    http_server:
+      address: 0.0.0.0:8081
+      path: /ingest
+
+  pipeline:
+    processors:
+      # WHY: events arrive two ways — live over HTTP and from fixture files in
+      # tests — and may be an already-structured object or a JSON-encoded
+      # string. Normalize once here so every later stage can assume a
+      # structured event. (Note the Bloblang rule: assignment starts from the
+      # whole document, `root = ...`, never just `root.x = ...`, or we'd
+      # replace the event instead of passing it through.)
+      - mapping: |
+          root = if this.type() == "string" { this.parse_json() } else { this }
+
+  output:
+    # WHY: straight to the hot (indexed, per-GB + per-event billed) tier.
+    # No filtering, no routing — this scenario exists to establish the
+    # baseline cost that demos 3 and 4 attack.
+    http_client:
+      url: http://costboard:8090/ingest/hot
+      verb: POST

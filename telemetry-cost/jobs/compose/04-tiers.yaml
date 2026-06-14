@@ -1,0 +1,63 @@
+# COMPOSE VARIANT of jobs/04-tiers.yaml — costboard reached by service hostname
+# (http://costboard:8090) instead of localhost. Only the URLs differ.
+# Demo 4 — Tiered routing: hot for signal, cold for compliance
+#
+# Filtering (demo 3) answered "what can we stop paying to index?" This demo
+# answers the follow-up every regulated team asks: "but we're REQUIRED to
+# keep some of that." Right — required to KEEP it, not required to pay
+# hot-index prices for it. So the edge routes instead of just dropping:
+#
+#   signal      -> hot tier   (indexed, queryable in seconds, $$$/GB)
+#   compliance  -> cold tier  (compressed object storage, pennies/GB-month,
+#                              rehydratable when the auditor calls)
+#   pure junk   -> deleted    (health/heartbeat/DEBUG never leave the site)
+#
+# One stream in, three destinies out, decided per-event at the edge.
+name: 04-tiers
+description: "Route signal to the hot tier, compliance-retain to cold storage, junk to /dev/null."
+type: pipeline
+config:
+  input:
+    http_server:
+      address: 0.0.0.0:8081
+      path: /ingest
+
+  pipeline:
+    processors:
+      # WHY: normalize string-or-object payloads into a structured event once,
+      # up front (see demo 1 for the full rationale).
+      - mapping: |
+          root = if this.type() == "string" { this.parse_json() } else { this }
+
+      # WHY: pure junk gets deleted BEFORE routing — health checks,
+      # heartbeats, and DEBUG have no incident value and no retention
+      # obligation. No tier should ever see them.
+      - mapping: |
+          root = if ["health", "heartbeat"].contains(this.kind) || this.level == "DEBUG" { deleted() }
+
+  output:
+    # WHY: the switch output routes each event to the first case whose check
+    # passes (docs.expanso.io/components/outputs/switch). Case order is the
+    # policy: signal wins over retention, so an ERROR that also carries
+    # compliance=retain lands hot (where the on-call needs it) rather than
+    # cold. Events matching no case are dropped — that's the third destiny.
+    switch:
+      cases:
+        # SIGNAL -> HOT. The same keep-list as demo 3 step 4, plus
+        # ever_queried — patterns that history says humans actually look at.
+        # .or() guards events missing optional fields.
+        - check: '["ERROR", "WARN"].contains(this.level) || this.duration_ms.or(0) > 2000 || this.ever_queried.or(false)'
+          output:
+            http_client:
+              url: http://costboard:8090/ingest/hot
+              verb: POST
+
+        # COMPLIANCE -> COLD. Must be kept (auth/payment/access trails), but
+        # nobody queries it day-to-day — so it goes to gzip'd object storage
+        # at ~pennies per GB-month instead of the indexed tier. The
+        # rehydrate script pulls it back when an audit demands it.
+        - check: 'this.compliance.or("none") == "retain"'
+          output:
+            http_client:
+              url: http://costboard:8090/ingest/cold
+              verb: POST

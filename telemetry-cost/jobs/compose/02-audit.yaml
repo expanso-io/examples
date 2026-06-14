@@ -1,0 +1,43 @@
+# COMPOSE VARIANT of jobs/02-audit.yaml — costboard reached by service hostname
+# (http://costboard:8090) instead of localhost. Only the URLs differ.
+# Demo 2 — The Audit
+#
+# Before you cut anything, you measure. Same everything-ships-hot flow as
+# demo 1, but a second lane tees every event to a local sample file. Then
+# scripts/audit.py reads that sample and answers the only question that
+# matters: of the volume you pay to index, how much is ever actually queried?
+# The gap between "stored" and "queried" is the garbage ratio.
+name: 02-audit
+description: "Ship everything hot AND tee a local sample for the volume-vs-queried audit."
+type: pipeline
+config:
+  input:
+    # WHY: identical intake to demo 1 — the audit must observe the real
+    # stream, not a synthetic one, or the numbers don't hold up in the room.
+    http_server:
+      address: 0.0.0.0:8081
+      path: /ingest
+
+  pipeline:
+    processors:
+      # WHY: normalize string-or-object payloads into a structured event once,
+      # up front (see demo 1 for the full rationale).
+      - mapping: |
+          root = if this.type() == "string" { this.parse_json() } else { this }
+
+  output:
+    # WHY: broker fan_out delivers every event to BOTH lanes — the hot tier
+    # keeps billing exactly as before (the audit changes nothing in
+    # production), while the file lane appends a local JSONL sample that
+    # audit.py can analyze offline. Measurement without disruption.
+    broker:
+      pattern: fan_out
+      outputs:
+        - http_client:
+            url: http://costboard:8090/ingest/hot
+            verb: POST
+        # WHY: the local sample is the audit's raw material. `lines` codec
+        # appends one JSON event per line so stdlib Python can stream it.
+        - file:
+            path: data/audit-sample.jsonl
+            codec: lines

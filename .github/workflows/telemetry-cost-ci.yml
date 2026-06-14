@@ -1,0 +1,93 @@
+name: telemetry-cost CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "telemetry-cost/**"
+      - ".github/workflows/telemetry-cost-ci.yml"
+  pull_request:
+    paths:
+      - "telemetry-cost/**"
+      - ".github/workflows/telemetry-cost-ci.yml"
+
+defaults:
+  run:
+    working-directory: telemetry-cost
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # uv powers `uvx`, which the fixtures step uses to run the public
+      # log-simulators with no install step.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      # Official installers (https://get.expanso.io). If they're unreachable on
+      # the runner, warn and skip the edge-dependent steps — the pure-python
+      # tests still run (and skip edge cases cleanly themselves).
+      - name: Install Expanso Edge + CLI
+        id: expanso
+        run: |
+          set +e
+          export EXPANSO_INSTALL_DIR="$HOME/.local/bin"
+          mkdir -p "$EXPANSO_INSTALL_DIR"
+          curl -fsSL https://get.expanso.io/edge/install.sh | bash \
+            || curl -fsSL https://get.expanso.io/edge/install.sh | sudo bash
+          curl -fsSL https://get.expanso.io/cli/install.sh | sh \
+            || curl -fsSL https://get.expanso.io/cli/install.sh | sudo sh
+          echo "$EXPANSO_INSTALL_DIR" >> "$GITHUB_PATH"
+          export PATH="$EXPANSO_INSTALL_DIR:$PATH"
+          if command -v expanso-cli >/dev/null 2>&1 && command -v expanso-edge >/dev/null 2>&1; then
+            echo "have_expanso=true" >> "$GITHUB_OUTPUT"
+            expanso-edge version
+            expanso-cli version
+          else
+            echo "::warning::Expanso installer unavailable on this runner; skipping validate/eval steps"
+            echo "have_expanso=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Seeded + time-anchored, so the generated fixtures are byte-identical to
+      # the committed ones. Uses uvx to pull log-simulators from GitHub.
+      - name: Regenerate fixtures (seeded)
+        run: make fixtures
+
+      - name: Validate all jobs (offline)
+        if: steps.expanso.outputs.have_expanso == 'true'
+        run: |
+          status=0
+          found=0
+          while IFS= read -r f; do
+            found=1
+            echo "::group::validate $f"
+            expanso-cli job validate "$f" --offline || status=1
+            echo "::endgroup::"
+          done < <(find jobs -name '*.yaml' -o -name '*.yml' 2>/dev/null | sort)
+          if [ "$found" -eq 0 ]; then
+            echo "::warning::no job files found under jobs/"
+          fi
+          exit $status
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+      - name: Run evals
+        if: steps.expanso.outputs.have_expanso == 'true'
+        run: python evals/run_evals.py
+
+      - name: Upload eval report
+        if: always() && hashFiles('telemetry-cost/evals/REPORT.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: telemetry-cost/evals/REPORT.md

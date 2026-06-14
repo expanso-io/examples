@@ -1,0 +1,154 @@
+# telemetry-cost — containerized demo stack (the self-contained LOCAL path)
+#
+# This compose file is the fully offline, no-account way to run the demo: a
+# local edge node, the costboard, and the four log-simulator streams, all in
+# containers. It is the escape hatch, not the headline.
+#
+# The headline experience runs THROUGH Expanso Cloud (cloud.expanso.io), which
+# orchestrates the same job YAMLs onto a registered edge node:
+#   make cloud-setup && make demo
+#
+#   docker compose --profile demo1 up    # Pillar 1: the telemetry tax
+#   docker compose --profile demo2 up    # Pillar 2: audit what you query
+#   docker compose --profile demo3 up    # Pillar 3: filter at the edge
+#   docker compose --profile demo4 up    # Pillar 4: hot/cold tiers
+#
+# `costboard`, `edge`, and the four log-simulator streams start with every
+# profile; each profile adds a one-shot deploy container that pushes the
+# pillar's jobs to the edge node (scenario first, intake second, so the
+# scenario's 8081 listener is up before lines start flowing). The exact same
+# job YAMLs deploy to a real fleet through Expanso Cloud (cloud.expanso.io).
+
+# Shared shape for the simulator streams: the uv image ships uvx, which pulls
+# the public log-simulators suite straight from GitHub — no custom image, no
+# build step. Each stream writes to the intake socket_server at edge:5601.
+# restart: on-failure covers the startup race (a sim exits if the intake
+# socket is not listening yet; compose restarts it until the deploy lands).
+x-sim: &sim
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  profiles: ["demo1", "demo2", "demo3", "demo4"]
+  depends_on:
+    - edge
+  restart: on-failure
+
+services:
+  costboard:
+    image: python:3.12-slim
+    working_dir: /app
+    command: python /app/server.py
+    environment:
+      PRESETS_FILE: /presets.json
+      # Contract with costboard/server.py: bind this host inside containers
+      # (default is 127.0.0.1 for local runs).
+      COSTBOARD_HOST: 0.0.0.0
+    volumes:
+      - ./costboard:/app:ro
+      - ./presets.json:/presets.json:ro
+      # Cold-lane gzip JSONL partitions land on the host so
+      # scripts/rehydrate.py works outside the container too.
+      - ./cold-storage:/app/cold-storage
+    ports:
+      - "8090:8090"
+
+  edge:
+    image: ghcr.io/expanso-io/expanso-edge:latest
+    # Local mode: standalone node, no orchestrator needed. --no-watch because
+    # config-file watching is pointless in an immutable container.
+    command: run --local --api-listen 0.0.0.0:19010 --no-watch
+    ports:
+      - "19010:19010" # edge API (job deploys)
+      - "8081:8081"   # scenario pipeline http_server input
+      - "5601:5601"   # intake socket_server (log-simulator streams)
+    depends_on:
+      - costboard
+
+  # --- the log-simulator streams, one service per format ---------------------
+  # Modest rates so the dashboard is readable; bump --rate to stress it.
+
+  sim-app:
+    <<: *sim
+    command:
+      [
+        "uvx", "--from", "git+https://github.com/expanso-io/log-simulators",
+        "logsim-app", "--rate", "8", "--output", "tcp://edge:5601",
+      ]
+
+  sim-k8s:
+    <<: *sim
+    command:
+      [
+        "uvx", "--from", "git+https://github.com/expanso-io/log-simulators",
+        "logsim-k8s", "--scenario", "crash-loop", "--rate", "6",
+        "--output", "tcp://edge:5601",
+      ]
+
+  sim-web:
+    <<: *sim
+    command:
+      [
+        "uvx", "--from", "git+https://github.com/expanso-io/log-simulators",
+        "logsim-web", "--rate", "10", "--output", "tcp://edge:5601",
+      ]
+
+  sim-cloud:
+    <<: *sim
+    command:
+      [
+        "uvx", "--from", "git+https://github.com/expanso-io/log-simulators",
+        "logsim-cloud", "--rate", "2", "--output", "tcp://edge:5601",
+      ]
+
+  # --- one-shot deployers, one per demo profile ------------------------------
+  # Each installs expanso-cli via the official installer (get.expanso.io) and
+  # deploys against the edge service API, preferring the jobs/compose/
+  # variants (costboard addressed by service hostname; regenerate with
+  # `make compose-jobs`). Scenario pipeline first, intake second, so lines
+  # always have a listener. See scripts/compose_deploy.sh for the mechanism.
+
+  deploy-demo1:
+    profiles: ["demo1"]
+    image: alpine:3.20
+    depends_on: [edge, costboard]
+    entrypoint: ["/bin/sh", "/deploy.sh"]
+    command: ["01-tax.yaml", "00-intake.yaml"]
+    environment:
+      EDGE_URL: http://edge:19010
+    volumes:
+      - ./jobs:/work/jobs:ro
+      - ./scripts/compose_deploy.sh:/deploy.sh:ro
+
+  deploy-demo2:
+    profiles: ["demo2"]
+    image: alpine:3.20
+    depends_on: [edge, costboard]
+    entrypoint: ["/bin/sh", "/deploy.sh"]
+    command: ["02-audit.yaml", "00-intake.yaml"]
+    environment:
+      EDGE_URL: http://edge:19010
+    volumes:
+      - ./jobs:/work/jobs:ro
+      - ./scripts/compose_deploy.sh:/deploy.sh:ro
+
+  deploy-demo3:
+    profiles: ["demo3"]
+    image: alpine:3.20
+    depends_on: [edge, costboard]
+    entrypoint: ["/bin/sh", "/deploy.sh"]
+    command: ["03-filter-step4.yaml", "00-intake.yaml"]
+    environment:
+      EDGE_URL: http://edge:19010
+    volumes:
+      - ./jobs:/work/jobs:ro
+      - ./scripts/compose_deploy.sh:/deploy.sh:ro
+
+  deploy-demo4:
+    profiles: ["demo4"]
+    image: alpine:3.20
+    depends_on: [edge, costboard]
+    entrypoint: ["/bin/sh", "/deploy.sh"]
+    command: ["04-tiers.yaml", "00-intake.yaml"]
+    environment:
+      EDGE_URL: http://edge:19010
+    volumes:
+      - ./jobs:/work/jobs:ro
+      - ./scripts/compose_deploy.sh:/deploy.sh:ro
