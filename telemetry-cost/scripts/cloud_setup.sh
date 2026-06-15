@@ -21,11 +21,29 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 # Pre-fill secrets from a local .env (gitignored) so you do not have to paste
-# them. Recognized keys: EXPANSO_EDGE_BOOTSTRAP_TOKEN, EXPANSO_ENDPOINT,
-# EXPANSO_API_KEY. Any not present here are prompted for interactively.
+# them. Recognized keys: EXPANSO_EDGE_BOOTSTRAP_TOKEN, EXPANSO_CLI_ENDPOINT
+# (or EXPANSO_ENDPOINT), EXPANSO_CLI_API_KEY (or EXPANSO_API_KEY). Anything not
+# present here is prompted for interactively.
 if [ -f "$ROOT/.env" ]; then
   set -a; . "$ROOT/.env"; set +a
 fi
+
+# Network control-plane endpoint. The SAME endpoint serves both node bootstrap
+# (POST /api/v1/nodes/register) and the CLI, so we resolve it once here and use
+# it for the bootstrap --url and the saved profile. Default the port to :9010
+# (the Expanso Cloud control-plane port) when the endpoint carries none, which
+# matches how saved profiles address a network. (The binary's built-in default
+# bootstrap host is not used: it targets a global host that 404s for a
+# per-network control plane.)
+norm_endpoint() {  # echo the endpoint with :9010 appended if it has no port
+  local e="$1"
+  case "${e#*://}" in
+    *:*) printf '%s' "$e" ;;
+    *)   printf '%s:9010' "$e" ;;
+  esac
+}
+CP_ENDPOINT="${EXPANSO_CLI_ENDPOINT:-${EXPANSO_ENDPOINT:-}}"
+[ -n "$CP_ENDPOINT" ] && CP_ENDPOINT="$(norm_endpoint "$CP_ENDPOINT")"
 
 PROFILE="${1:-${DEMO_PROFILE:-telemetry-demo}}"
 EDGE_DATA="$ROOT/.edge-cloud"
@@ -130,11 +148,27 @@ else
 fi
 [ -n "${TOKEN:-}" ] || die "no token entered"
 
+# The bootstrap registers against the network control plane, so we need its
+# endpoint now. Prompt if it was not supplied via .env.
+if [ -z "$CP_ENDPOINT" ]; then
+  printf '\nControl-plane endpoint (e.g. https://<network>.us2.cloud.expanso.io): '
+  IFS= read -r ep || true
+  [ -n "${ep:-}" ] || die "no endpoint entered"
+  CP_ENDPOINT="$(norm_endpoint "$ep")"
+fi
+ok "control plane: $CP_ENDPOINT"
+
 # --- step 3: bootstrap the edge node ----------------------------------------
 
 step "3/8  Registering the demo edge node"
-expanso-edge bootstrap --token "$TOKEN" --data-dir "$EDGE_DATA" --force \
-  || die "bootstrap failed - token may be expired or single-use; copy a fresh one and re-run"
+# --url targets the network's control plane (it serves /api/v1/nodes/register).
+# An explicit non-cloud EXPANSO_EDGE_BOOTSTRAP_URL still wins for self-hosted.
+BOOT_URL="$CP_ENDPOINT"
+if [ -n "${EXPANSO_EDGE_BOOTSTRAP_URL:-}" ] && [[ "$EXPANSO_EDGE_BOOTSTRAP_URL" != *start.cloud.expanso.io* ]]; then
+  BOOT_URL="$EXPANSO_EDGE_BOOTSTRAP_URL"
+fi
+expanso-edge bootstrap --token "$TOKEN" --data-dir "$EDGE_DATA" --url "$BOOT_URL" --force \
+  || die "bootstrap failed. Note: the node needs a single-use bootstrap TOKEN (a JWT from Nodes -> Add Node), not a long-lived exp_bk_ bootstrap key. Copy a fresh token and re-run."
 unset TOKEN
 ok "edge node bootstrapped into $EDGE_DATA"
 
@@ -159,43 +193,37 @@ step "5/8  Starting the node"
 if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
   ok "demo node already running (pid $(cat "$PIDFILE"))"
 else
-  nohup expanso-edge run --data-dir "$EDGE_DATA" > "$LOGFILE" 2>&1 &
+  # --api-listen on a dedicated port: the node only connects OUTBOUND to the
+  # control plane, but it still binds a local API. Pin it to 19011 so it never
+  # collides with the default 9010 (often a tunnel) or the local demo edge
+  # (19010, used by `just demo-local`). Override with EXPANSO_NODE_API_PORT.
+  node_api="127.0.0.1:${EXPANSO_NODE_API_PORT:-19011}"
+  nohup expanso-edge run --data-dir "$EDGE_DATA" --api-listen "$node_api" > "$LOGFILE" 2>&1 &
   echo $! > "$PIDFILE"
-  ok "demo node started (pid $(cat "$PIDFILE"), log $LOGFILE)"
+  ok "demo node started (pid $(cat "$PIDFILE"), api $node_api, log $LOGFILE)"
 fi
 
 # --- step 6: control-plane endpoint + API key --------------------------------
 
-step "6/8  Control-plane endpoint and API key"
-if [ -z "${EXPANSO_ENDPOINT:-}" ] || [ -z "${EXPANSO_API_KEY:-}" ]; then
-  say "Back in Expanso Cloud:"
-  say "  1. Open the network's API access / Settings page"
-  say "  2. Copy the control-plane endpoint (host or URL)"
-  say "  3. Copy an API key (starts with exp_ak_...)"
-  say "  (tip: add EXPANSO_ENDPOINT and EXPANSO_API_KEY to .env to skip this)"
-fi
-if [ -n "${EXPANSO_ENDPOINT:-}" ]; then
-  NET_ENDPOINT="$EXPANSO_ENDPOINT"
-  ok "using endpoint from .env (EXPANSO_ENDPOINT)"
+step "6/8  Saving the CLI profile"
+# Endpoint is already resolved (CP_ENDPOINT, with :9010). Only the API key is
+# still needed. Accept the canonical name first, then the short alias.
+API_KEY="${EXPANSO_CLI_API_KEY:-${EXPANSO_API_KEY:-}}"
+if [ -n "$API_KEY" ]; then
+  ok "using API key from .env"
 else
-  printf '\nControl-plane endpoint: '
-  IFS= read -r NET_ENDPOINT || true
-fi
-[ -n "${NET_ENDPOINT:-}" ] || die "no endpoint entered"
-if [ -n "${EXPANSO_API_KEY:-}" ]; then
-  API_KEY="$EXPANSO_API_KEY"
-  ok "using API key from .env (EXPANSO_API_KEY)"
-else
-  printf 'API key (input hidden): '
+  say "In Expanso Cloud, open the network's API access page and copy an API key"
+  say "(starts with exp_ak_...). Tip: add EXPANSO_CLI_API_KEY to .env to skip this."
+  printf '\nAPI key (input hidden): '
   IFS= read -r -s API_KEY || true
   printf '\n'
 fi
 [ -n "${API_KEY:-}" ] || die "no API key entered"
 
-expanso-cli profile save "$PROFILE" --endpoint "$NET_ENDPOINT" --api-key "$API_KEY" \
+expanso-cli profile save "$PROFILE" --endpoint "$CP_ENDPOINT" --api-key "$API_KEY" \
   || die "profile save failed - re-check the endpoint and API key"
 unset API_KEY
-ok "saved profile '$PROFILE' -> $NET_ENDPOINT"
+ok "saved profile '$PROFILE' -> $CP_ENDPOINT"
 
 # --- step 7: wait for the node to connect ------------------------------------
 
