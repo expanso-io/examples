@@ -21,3 +21,6 @@ __pycache__/
 .DS_Store
 .ptest*
 nohup.out
+
+# Local secrets (bootstrap token / API key for cloud-setup)
+.env

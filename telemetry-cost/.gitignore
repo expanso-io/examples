@@ -10,3 +10,6 @@ __pycache__/
 .ptest*
 nohup.out
 .venv
+
+# Local secrets (bootstrap token / API key for cloud-setup)
+.env

@@ -20,6 +20,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Pre-fill secrets from a local .env (gitignored) so you do not have to paste
+# them. Recognized keys: EXPANSO_EDGE_BOOTSTRAP_TOKEN, EXPANSO_ENDPOINT,
+# EXPANSO_API_KEY. Any not present here are prompted for interactively.
+if [ -f "$ROOT/.env" ]; then
+  set -a; . "$ROOT/.env"; set +a
+fi
+
 PROFILE="${1:-${DEMO_PROFILE:-telemetry-demo}}"
 EDGE_DATA="$ROOT/.edge-cloud"
 RUN_DIR="$ROOT/.run"
@@ -108,14 +115,19 @@ fi
 # --- step 2: bootstrap token -------------------------------------------------
 
 step "2/8  Bootstrap token"
-say "In your browser:"
-say "  1. Open https://cloud.expanso.io"
-say "  2. Create a network (e.g. 'telemetry-demo') if you do not have one"
-say "  3. Go to Nodes -> Add Node"
-say "  4. Copy the bootstrap token"
-printf '\nPaste the bootstrap token (input hidden): '
-IFS= read -r -s TOKEN || true
-printf '\n'
+if [ -n "${EXPANSO_EDGE_BOOTSTRAP_TOKEN:-}" ]; then
+  TOKEN="$EXPANSO_EDGE_BOOTSTRAP_TOKEN"
+  ok "using bootstrap token from .env (EXPANSO_EDGE_BOOTSTRAP_TOKEN)"
+else
+  say "In your browser:"
+  say "  1. Open https://cloud.expanso.io"
+  say "  2. Create a network (e.g. 'telemetry-demo') if you do not have one"
+  say "  3. Go to Nodes -> Add Node"
+  say "  4. Copy the bootstrap token"
+  printf '\nPaste the bootstrap token (input hidden): '
+  IFS= read -r -s TOKEN || true
+  printf '\n'
+fi
 [ -n "${TOKEN:-}" ] || die "no token entered"
 
 # --- step 3: bootstrap the edge node ----------------------------------------
@@ -155,16 +167,29 @@ fi
 # --- step 6: control-plane endpoint + API key --------------------------------
 
 step "6/8  Control-plane endpoint and API key"
-say "Back in Expanso Cloud:"
-say "  1. Open the network's API access / Settings page"
-say "  2. Copy the control-plane endpoint (host or URL)"
-say "  3. Copy an API key (starts with exp_ak_...)"
-printf '\nControl-plane endpoint: '
-IFS= read -r NET_ENDPOINT || true
+if [ -z "${EXPANSO_ENDPOINT:-}" ] || [ -z "${EXPANSO_API_KEY:-}" ]; then
+  say "Back in Expanso Cloud:"
+  say "  1. Open the network's API access / Settings page"
+  say "  2. Copy the control-plane endpoint (host or URL)"
+  say "  3. Copy an API key (starts with exp_ak_...)"
+  say "  (tip: add EXPANSO_ENDPOINT and EXPANSO_API_KEY to .env to skip this)"
+fi
+if [ -n "${EXPANSO_ENDPOINT:-}" ]; then
+  NET_ENDPOINT="$EXPANSO_ENDPOINT"
+  ok "using endpoint from .env (EXPANSO_ENDPOINT)"
+else
+  printf '\nControl-plane endpoint: '
+  IFS= read -r NET_ENDPOINT || true
+fi
 [ -n "${NET_ENDPOINT:-}" ] || die "no endpoint entered"
-printf 'API key (input hidden): '
-IFS= read -r -s API_KEY || true
-printf '\n'
+if [ -n "${EXPANSO_API_KEY:-}" ]; then
+  API_KEY="$EXPANSO_API_KEY"
+  ok "using API key from .env (EXPANSO_API_KEY)"
+else
+  printf 'API key (input hidden): '
+  IFS= read -r -s API_KEY || true
+  printf '\n'
+fi
 [ -n "${API_KEY:-}" ] || die "no API key entered"
 
 expanso-cli profile save "$PROFILE" --endpoint "$NET_ENDPOINT" --api-key "$API_KEY" \
